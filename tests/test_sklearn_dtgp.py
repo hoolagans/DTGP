@@ -59,6 +59,22 @@ class TestDTGPClassifier(unittest.TestCase):
         self.assertEqual(clf.num_models, 15)
         self.assertEqual(clf.generations, 30)
 
+    def test_view_model_interpretable_format(self):
+        X = [[4.0, 1.0], [1.0, 4.0], [5.0, 2.0], [2.0, 5.0], [3.0, 1.0], [1.0, 3.0]]
+        y = [1 if row[0] > row[1] else 0 for row in X]
+
+        clf = DTGPClassifier(random_state=11, num_models=20, generations=20)
+        clf.fit(X, y)
+
+        one = clf.view_model()
+        self.assertIsInstance(one, str)
+        self.assertTrue(len(one) > 0)
+
+        many = clf.view_model(3)
+        self.assertIsInstance(many, list)
+        self.assertEqual(len(many), 3)
+        self.assertTrue(all(isinstance(expr, str) and len(expr) > 0 for expr in many))
+
 
 if __name__ == "__main__":
     unittest.main()

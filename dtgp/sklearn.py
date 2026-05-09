@@ -109,6 +109,22 @@ class DTGPClassifier:
             raise ValueError("X and y must have the same number of samples")
         return sum(a == b for a, b in zip(y_true, y_pred)) / len(y_true)
 
+    def view_model(self, n_models: int = 1) -> str | List[str]:
+        """Return interpretable representation(s) of evolved model(s)."""
+        self._require_fitted()
+        if n_models < 1:
+            raise ValueError("n_models must be >= 1")
+
+        limit = min(n_models, len(self.population_))
+        models = self.population_[:limit]
+        rendered: List[str] = []
+        for i, model in enumerate(models):
+            expr = self._tree_to_expression(model)
+            if i == 0 and self.invert_output_:
+                expr = f"NOT ({expr})"
+            rendered.append(expr)
+        return rendered[0] if n_models == 1 else rendered
+
     # --- DTGP internals ---
     def _leaf_ops(self):
         return {
@@ -208,6 +224,38 @@ class DTGPClassifier:
             return bool(self._inter_ops()[op](self._eval_leaf(left, data), self._eval_leaf(right, data)))
         _, op, left, right = tree
         return bool(self._node_ops()[op](self._evaluate_model(left, data), self._evaluate_model(right, data)))
+
+    def _leaf_to_expression(self, leaf) -> str:
+        if leaf[0] == "const":
+            return f"{float(leaf[1]):.6g}"
+
+        leaf_names = {
+            "avg": "Avg",
+            "med": "Med",
+            "mn": "Mn",
+            "mx": "Mx",
+            "diff": "Diff",
+            "diff2": "Diff2",
+            "diff3": "Diff3",
+            "chng": "Chng",
+            "dev": "Dev",
+            "getred": "GetRed",
+            "getgreen": "GetGreen",
+            "getblue": "GetBlue",
+        }
+        return f"{leaf_names[leaf[1]]}(data)"
+
+    def _tree_to_expression(self, tree) -> str:
+        if tree[0] == "inter":
+            _, op, left, right = tree
+            cmp_names = {"ge": ">=", "gt": ">", "le": "<=", "lt": "<", "eq": "==", "ne": "!="}
+            return f"({self._leaf_to_expression(left)} {cmp_names[op]} {self._leaf_to_expression(right)})"
+
+        _, op, left, right = tree
+        node_names = {"and": "AND", "or": "OR", "nand": "NAND", "nor": "NOR", "xor": "XOR"}
+        left_expr = self._tree_to_expression(left)
+        right_expr = self._tree_to_expression(right)
+        return f"({left_expr} {node_names[op]} {right_expr})"
 
     def _raw_fitness(self, tree, X: Sequence[Sequence[float]], y_bool: Sequence[bool]) -> float:
         preds = [self._evaluate_model(tree, row) for row in X]
