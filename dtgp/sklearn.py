@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import sys
 import math
 import random
 import statistics
@@ -23,6 +24,7 @@ class DTGPClassifier:
         tournament_size: int = 5,
         random_state: int | None = None,
         initial_population: list | None = None,
+        show_training_curve: bool = False,
     ) -> None:
         self.num_models = num_models
         self.generations = generations
@@ -33,6 +35,7 @@ class DTGPClassifier:
         self.tournament_size = tournament_size
         self.random_state = random_state
         self.initial_population = [] if initial_population is None else initial_population
+        self.show_training_curve = show_training_curve
 
     # --- sklearn-style parameter API ---
     def get_params(self, deep: bool = True) -> dict[str, Any]:
@@ -46,6 +49,7 @@ class DTGPClassifier:
             "tournament_size": self.tournament_size,
             "random_state": self.random_state,
             "initial_population": copy.deepcopy(self.initial_population) if deep else self.initial_population,
+            "show_training_curve": self.show_training_curve,
         }
 
     def set_params(self, **params: Any) -> "DTGPClassifier":
@@ -74,13 +78,14 @@ class DTGPClassifier:
         self.n_features_in_ = len(X2[0])
 
         self._rng = random.Random(self.random_state)
-        models = self._evolve(X2, y_bool)
+        models, history = self._evolve(X2, y_bool)
 
         best_tree = models[0]
         raw_fit = self._raw_fitness(best_tree, X2, y_bool)
         self.invert_output_ = raw_fit < 0.5
         self.best_tree_ = best_tree
         self.population_ = models
+        self.training_curve_ = history
         self.best_fitness_ = self._fitness(best_tree, X2, y_bool)
         return self
 
@@ -123,6 +128,25 @@ class DTGPClassifier:
             if i == 0 and self.invert_output_:
                 expr = f"NOT ({expr})"
             rendered.append(expr)
+        return rendered[0] if n_models == 1 else rendered
+
+    def view_model_tree(self, n_models: int = 1) -> str | List[str]:
+        """Return tree-plot-like representation(s) of evolved model(s)."""
+        self._require_fitted()
+        if n_models < 1:
+            raise ValueError("n_models must be >= 1")
+
+        limit = min(n_models, len(self.population_))
+        models = self.population_[:limit]
+        rendered: List[str] = []
+        for i, model in enumerate(models):
+            lines = [f"[Model {i + 1}]"]
+            if i == 0 and self.invert_output_:
+                lines.append("└─ NOT")
+                lines.extend(self._tree_plot_lines(model, "   "))
+            else:
+                lines.extend(self._tree_plot_lines(model, ""))
+            rendered.append("\n".join(lines))
         return rendered[0] if n_models == 1 else rendered
 
     # --- DTGP internals ---
@@ -257,6 +281,27 @@ class DTGPClassifier:
         right_expr = self._tree_to_expression(right)
         return f"({left_expr} {node_names[op]} {right_expr})"
 
+    def _tree_plot_lines(self, tree, indent: str = "") -> List[str]:
+        if tree[0] == "inter":
+            _, op, left, right = tree
+            cmp_names = {"ge": ">=", "gt": ">", "le": "<=", "lt": "<", "eq": "==", "ne": "!="}
+            return [f"{indent}└─ {self._leaf_to_expression(left)} {cmp_names[op]} {self._leaf_to_expression(right)}"]
+
+        _, op, left, right = tree
+        node_names = {"and": "AND", "or": "OR", "nand": "NAND", "nor": "NOR", "xor": "XOR"}
+        lines = [f"{indent}└─ {node_names[op]}"]
+        lines.append(f"{indent}   ├─ LEFT")
+        lines.extend(self._tree_plot_lines(left, f"{indent}   │  "))
+        lines.append(f"{indent}   └─ RIGHT")
+        lines.extend(self._tree_plot_lines(right, f"{indent}      "))
+        return lines
+
+    def _training_curve_line(self, generation: int, total_generations: int, best_fitness: float) -> str:
+        width = 30
+        filled = max(0, min(width, int(round(best_fitness * width))))
+        bar = "#" * filled + "-" * (width - filled)
+        return f"Generation {generation}/{total_generations} |{bar}| best_fitness={best_fitness:.4f}"
+
     def _raw_fitness(self, tree, X: Sequence[Sequence[float]], y_bool: Sequence[bool]) -> float:
         preds = [self._evaluate_model(tree, row) for row in X]
         return sum(a == b for a, b in zip(preds, y_bool)) / len(X)
@@ -319,7 +364,12 @@ class DTGPClassifier:
         while len(models) < self.num_models:
             models.append(self._random_tree(self.max_depth))
 
-        for _ in range(self.generations):
+        initial_best = max(self._fitness(m, X, y_bool) for m in models)
+        history = [initial_best]
+        if self.show_training_curve:
+            print(self._training_curve_line(0, self.generations, initial_best), file=sys.stderr, flush=True)
+
+        for gen_idx in range(self.generations):
             new_models = []
 
             cross_target = int(self.crossover_rate * self.num_models)
@@ -347,9 +397,13 @@ class DTGPClassifier:
                 filtered.append(self._random_tree(self.max_depth))
 
             models = filtered[: self.num_models]
+            best_now = max(self._fitness(m, X, y_bool) for m in models)
+            history.append(best_now)
+            if self.show_training_curve:
+                print(self._training_curve_line(gen_idx + 1, self.generations, best_now), file=sys.stderr, flush=True)
 
         final_scored = sorted(((m, self._fitness(m, X, y_bool)) for m in models), key=lambda t: t[1], reverse=True)
-        return [m for m, _ in final_scored]
+        return [m for m, _ in final_scored], history
 
     def _require_fitted(self):
         required = ["best_tree_", "classes_", "n_features_in_", "invert_output_"]

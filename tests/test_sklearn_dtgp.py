@@ -1,4 +1,6 @@
 import unittest
+from contextlib import redirect_stderr
+from io import StringIO
 
 from dtgp import DTGPClassifier
 
@@ -53,11 +55,13 @@ class TestDTGPClassifier(unittest.TestCase):
         params = clf.get_params()
         self.assertEqual(params["num_models"], 10)
         self.assertEqual(params["generations"], 20)
+        self.assertFalse(params["show_training_curve"])
 
-        returned = clf.set_params(num_models=15, generations=30)
+        returned = clf.set_params(num_models=15, generations=30, show_training_curve=True)
         self.assertIs(returned, clf)
         self.assertEqual(clf.num_models, 15)
         self.assertEqual(clf.generations, 30)
+        self.assertTrue(clf.show_training_curve)
 
     def test_view_model_interpretable_format(self):
         X = [[4.0, 1.0], [1.0, 4.0], [5.0, 2.0], [2.0, 5.0], [3.0, 1.0], [1.0, 3.0]]
@@ -74,6 +78,38 @@ class TestDTGPClassifier(unittest.TestCase):
         self.assertIsInstance(many, list)
         self.assertEqual(len(many), 3)
         self.assertTrue(all(isinstance(expr, str) and len(expr) > 0 for expr in many))
+
+    def test_view_model_tree_format(self):
+        X = [[4.0, 1.0], [1.0, 4.0], [5.0, 2.0], [2.0, 5.0], [3.0, 1.0], [1.0, 3.0]]
+        y = [1 if row[0] > row[1] else 0 for row in X]
+
+        clf = DTGPClassifier(random_state=13, num_models=20, generations=20)
+        clf.fit(X, y)
+
+        tree_text = clf.view_model_tree()
+        self.assertIsInstance(tree_text, str)
+        self.assertIn("[Model 1]", tree_text)
+        self.assertIn("└─", tree_text)
+
+        trees = clf.view_model_tree(2)
+        self.assertIsInstance(trees, list)
+        self.assertEqual(len(trees), 2)
+        self.assertTrue(all("[Model " in t for t in trees))
+
+    def test_training_curve_history_and_live_output(self):
+        X = [[4.0, 1.0], [1.0, 4.0], [5.0, 2.0], [2.0, 5.0], [3.0, 1.0], [1.0, 3.0]]
+        y = [1 if row[0] > row[1] else 0 for row in X]
+
+        clf = DTGPClassifier(random_state=17, num_models=10, generations=5, show_training_curve=True)
+        stderr = StringIO()
+        with redirect_stderr(stderr):
+            clf.fit(X, y)
+
+        self.assertTrue(hasattr(clf, "training_curve_"))
+        self.assertEqual(len(clf.training_curve_), 6)
+        live_text = stderr.getvalue()
+        self.assertIn("Generation 0/5", live_text)
+        self.assertIn("Generation 5/5", live_text)
 
 
 if __name__ == "__main__":
