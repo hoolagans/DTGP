@@ -1,0 +1,340 @@
+"""SKLearn-compatible DTGP classifier implementation."""
+
+from __future__ import annotations
+
+import copy
+import math
+import random
+import statistics
+from typing import Any, Iterable, List, Sequence, Tuple
+
+
+class DTGPClassifier:
+    """Decision Tree Genetic Programming classifier with sklearn-style API."""
+
+    def __init__(
+        self,
+        num_models: int = 30,
+        generations: int = 100,
+        crossover_rate: float = 0.4,
+        mutation_rate: float = 0.3,
+        elitist_rate: float = 0.2,
+        max_depth: int = 6,
+        tournament_size: int = 5,
+        random_state: int | None = None,
+        initial_population: list | None = None,
+    ) -> None:
+        self.num_models = num_models
+        self.generations = generations
+        self.crossover_rate = crossover_rate
+        self.mutation_rate = mutation_rate
+        self.elitist_rate = elitist_rate
+        self.max_depth = max_depth
+        self.tournament_size = tournament_size
+        self.random_state = random_state
+        self.initial_population = [] if initial_population is None else initial_population
+
+    # --- sklearn-style parameter API ---
+    def get_params(self, deep: bool = True) -> dict[str, Any]:
+        return {
+            "num_models": self.num_models,
+            "generations": self.generations,
+            "crossover_rate": self.crossover_rate,
+            "mutation_rate": self.mutation_rate,
+            "elitist_rate": self.elitist_rate,
+            "max_depth": self.max_depth,
+            "tournament_size": self.tournament_size,
+            "random_state": self.random_state,
+            "initial_population": copy.deepcopy(self.initial_population) if deep else self.initial_population,
+        }
+
+    def set_params(self, **params: Any) -> "DTGPClassifier":
+        for key, value in params.items():
+            if not hasattr(self, key):
+                raise ValueError(f"Invalid parameter '{key}' for DTGPClassifier")
+            setattr(self, key, value)
+        return self
+
+    # --- fit/predict API ---
+    def fit(self, X: Sequence[Sequence[float]], y: Sequence[Any]) -> "DTGPClassifier":
+        X2 = _to_2d(X)
+        y_list = list(y)
+        if len(X2) != len(y_list):
+            raise ValueError("X and y must have the same number of samples")
+        if len(X2) == 0:
+            raise ValueError("X and y must not be empty")
+
+        classes = sorted(set(y_list))
+        if len(classes) != 2:
+            raise ValueError("DTGPClassifier currently supports binary classification only")
+
+        self.classes_ = classes
+        positive_class = classes[1]
+        y_bool = [label == positive_class for label in y_list]
+        self.n_features_in_ = len(X2[0])
+
+        self._rng = random.Random(self.random_state)
+        models = self._evolve(X2, y_bool)
+
+        best_tree = models[0]
+        raw_fit = self._raw_fitness(best_tree, X2, y_bool)
+        self.invert_output_ = raw_fit < 0.5
+        self.best_tree_ = best_tree
+        self.population_ = models
+        self.best_fitness_ = self._fitness(best_tree, X2, y_bool)
+        return self
+
+    def predict(self, X: Sequence[Sequence[float]]) -> List[Any]:
+        self._require_fitted()
+        X2 = _to_2d(X)
+        if any(len(row) != self.n_features_in_ for row in X2):
+            raise ValueError("X has a different number of features than seen during fit")
+
+        bool_pred = [self._evaluate_model(self.best_tree_, row) for row in X2]
+        if self.invert_output_:
+            bool_pred = [not p for p in bool_pred]
+
+        neg, pos = self.classes_[0], self.classes_[1]
+        return [pos if p else neg for p in bool_pred]
+
+    def predict_proba(self, X: Sequence[Sequence[float]]) -> List[List[float]]:
+        preds = self.predict(X)
+        neg, pos = self.classes_[0], self.classes_[1]
+        return [[1.0, 0.0] if label == neg else [0.0, 1.0] for label in preds]
+
+    def score(self, X: Sequence[Sequence[float]], y: Sequence[Any]) -> float:
+        y_true = list(y)
+        y_pred = self.predict(X)
+        if len(y_true) != len(y_pred):
+            raise ValueError("X and y must have the same number of samples")
+        return sum(a == b for a, b in zip(y_true, y_pred)) / len(y_true)
+
+    # --- DTGP internals ---
+    def _leaf_ops(self):
+        return {
+            "avg": lambda d: statistics.fmean(d) if d else 0.0,
+            "med": lambda d: statistics.median(d) if d else 0.0,
+            "mn": lambda d: min(d) if d else 0.0,
+            "mx": lambda d: max(d) if d else 0.0,
+            "diff": lambda d: (d[-1] - d[0]) if len(d) >= 2 else 0.0,
+            "diff2": lambda d: (d[1] - d[0]) if len(d) >= 2 else 0.0,
+            "diff3": lambda d: (d[2] - d[1]) if len(d) >= 3 else 0.0,
+            "chng": lambda d: (max(d) - min(d)) if d else 0.0,
+            "dev": lambda d: statistics.pstdev(d) if len(d) >= 2 else 0.0,
+            "getred": lambda d: d[0] if len(d) >= 1 else 0.0,
+            "getgreen": lambda d: d[1] if len(d) >= 2 else 0.0,
+            "getblue": lambda d: d[2] if len(d) >= 3 else 0.0,
+        }
+
+    def _inter_ops(self):
+        return {
+            "ge": lambda a, b: a >= b,
+            "gt": lambda a, b: a > b,
+            "le": lambda a, b: a <= b,
+            "lt": lambda a, b: a < b,
+            "eq": lambda a, b: a == b,
+            "ne": lambda a, b: a != b,
+        }
+
+    def _node_ops(self):
+        return {
+            "and": lambda a, b: bool(a) and bool(b),
+            "or": lambda a, b: bool(a) or bool(b),
+            "nand": lambda a, b: not (bool(a) and bool(b)),
+            "nor": lambda a, b: not (bool(a) or bool(b)),
+            "xor": lambda a, b: bool(a) ^ bool(b),
+        }
+
+    def _random_leaf(self):
+        choices = list(self._leaf_ops().keys()) + ["const"]
+        op = self._rng.choice(choices)
+        if op == "const":
+            return ("const", self._rng.uniform(0.0, 1.0))
+        return ("leaf", op)
+
+    def _random_inter(self):
+        op = self._rng.choice(list(self._inter_ops().keys()))
+        return ("inter", op, self._random_leaf(), self._random_leaf())
+
+    def _random_branch(self, depth: int, max_depth: int):
+        if depth >= max_depth:
+            return self._random_inter()
+        if self._rng.randint(0, 2) == 1:
+            op = self._rng.choice(list(self._node_ops().keys()))
+            return (
+                "node",
+                op,
+                self._random_branch(depth + 1, max_depth),
+                self._random_branch(depth + 1, max_depth),
+            )
+        return self._random_inter()
+
+    def _random_tree(self, max_depth: int):
+        op = self._rng.choice(list(self._node_ops().keys()))
+        tree = (
+            "node",
+            op,
+            self._random_branch(1, max_depth),
+            self._random_branch(1, max_depth),
+        )
+        while self._tree_depth(tree) > max_depth:
+            op = self._rng.choice(list(self._node_ops().keys()))
+            tree = (
+                "node",
+                op,
+                self._random_branch(1, max_depth),
+                self._random_branch(1, max_depth),
+            )
+        return tree
+
+    def _tree_depth(self, tree) -> int:
+        kind = tree[0]
+        if kind == "inter":
+            return 2
+        return 1 + max(self._tree_depth(tree[2]), self._tree_depth(tree[3]))
+
+    def _eval_leaf(self, leaf, data: Sequence[float]) -> float:
+        if leaf[0] == "const":
+            return float(leaf[1])
+        value = self._leaf_ops()[leaf[1]](data)
+        if isinstance(value, (int, float)) and math.isfinite(float(value)):
+            return float(value)
+        return 0.0
+
+    def _evaluate_model(self, tree, data: Sequence[float]) -> bool:
+        kind = tree[0]
+        if kind == "inter":
+            _, op, left, right = tree
+            return bool(self._inter_ops()[op](self._eval_leaf(left, data), self._eval_leaf(right, data)))
+        _, op, left, right = tree
+        return bool(self._node_ops()[op](self._evaluate_model(left, data), self._evaluate_model(right, data)))
+
+    def _raw_fitness(self, tree, X: Sequence[Sequence[float]], y_bool: Sequence[bool]) -> float:
+        preds = [self._evaluate_model(tree, row) for row in X]
+        return sum(a == b for a, b in zip(preds, y_bool)) / len(X)
+
+    def _fitness(self, tree, X: Sequence[Sequence[float]], y_bool: Sequence[bool]) -> float:
+        raw = self._raw_fitness(tree, X, y_bool)
+        return max(raw, 1.0 - raw)
+
+    def _collect_paths(self, tree, prefix: Tuple[int, ...] = ()) -> List[Tuple[int, ...]]:
+        paths = [prefix]
+        if tree[0] == "node":
+            paths.extend(self._collect_paths(tree[2], prefix + (2,)))
+            paths.extend(self._collect_paths(tree[3], prefix + (3,)))
+        return paths
+
+    def _get_subtree(self, tree, path: Tuple[int, ...]):
+        cur = tree
+        for idx in path:
+            cur = cur[idx]
+        return cur
+
+    def _set_subtree(self, tree, path: Tuple[int, ...], replacement):
+        if not path:
+            return replacement
+        idx = path[0]
+        if tree[0] != "node":
+            return replacement
+        if idx == 2:
+            return (tree[0], tree[1], self._set_subtree(tree[2], path[1:], replacement), tree[3])
+        return (tree[0], tree[1], tree[2], self._set_subtree(tree[3], path[1:], replacement))
+
+    def _mutate(self, tree):
+        paths = self._collect_paths(tree)
+        target = self._rng.choice(paths)
+        replacement = self._random_branch(1, max(2, self.max_depth))
+        return self._set_subtree(tree, target, replacement)
+
+    def _crossover(self, tree1, tree2):
+        paths1 = self._collect_paths(tree1)
+        paths2 = self._collect_paths(tree2)
+        p1 = self._rng.choice(paths1)
+        p2 = self._rng.choice(paths2)
+
+        s1 = self._get_subtree(tree1, p1)
+        s2 = self._get_subtree(tree2, p2)
+
+        new1 = self._set_subtree(tree1, p1, s2)
+        new2 = self._set_subtree(tree2, p2, s1)
+        return new1, new2
+
+    def _tournament_select(self, models, X, y_bool):
+        size = min(max(2, self.tournament_size), len(models))
+        sample = self._rng.sample(models, size)
+        scored = [(m, self._fitness(m, X, y_bool)) for m in sample]
+        scored.sort(key=lambda t: t[1], reverse=True)
+        return scored[0][0]
+
+    def _evolve(self, X, y_bool):
+        models = list(self.initial_population)
+        while len(models) < self.num_models:
+            models.append(self._random_tree(self.max_depth))
+
+        for _ in range(self.generations):
+            new_models = []
+
+            cross_target = int(self.crossover_rate * self.num_models)
+            mut_target = int((self.crossover_rate + self.mutation_rate) * self.num_models)
+            elite_count = int(self.elitist_rate * self.num_models)
+
+            while len(new_models) < cross_target:
+                p1 = self._tournament_select(models, X, y_bool)
+                p2 = self._tournament_select(models, X, y_bool)
+                c1, c2 = self._crossover(p1, p2)
+                new_models.extend([c1, c2])
+
+            while len(new_models) < mut_target:
+                p = self._tournament_select(models, X, y_bool)
+                new_models.append(self._mutate(p))
+
+            scored = sorted(((m, self._fitness(m, X, y_bool)) for m in models), key=lambda t: t[1], reverse=True)
+            elites = [m for m, _ in scored[:elite_count]]
+            new_models.extend(elites)
+
+            deduped = list(dict.fromkeys(new_models))
+            filtered = [m for m in deduped if self._tree_depth(m) <= self.max_depth]
+
+            while len(filtered) < self.num_models:
+                filtered.append(self._random_tree(self.max_depth))
+
+            models = filtered[: self.num_models]
+
+        final_scored = sorted(((m, self._fitness(m, X, y_bool)) for m in models), key=lambda t: t[1], reverse=True)
+        return [m for m, _ in final_scored]
+
+    def _require_fitted(self):
+        required = ["best_tree_", "classes_", "n_features_in_", "invert_output_"]
+        if not all(hasattr(self, name) for name in required):
+            raise ValueError("This DTGPClassifier instance is not fitted yet. Call 'fit' first.")
+
+
+def _flatten_row(row: Iterable[Any]) -> List[float]:
+    out: List[float] = []
+    for val in row:
+        if isinstance(val, (list, tuple)):
+            out.extend(_flatten_row(val))
+        else:
+            out.append(float(val))
+    return out
+
+
+def _to_2d(X: Sequence[Sequence[float]]) -> List[List[float]]:
+    if hasattr(X, "tolist"):
+        X = X.tolist()  # type: ignore[assignment]
+
+    rows = list(X)
+    if not rows:
+        return []
+
+    first = rows[0]
+    if isinstance(first, (int, float)):
+        raise ValueError("X must be 2D (n_samples, n_features)")
+
+    out = [_flatten_row(row) for row in rows]
+    n_features = len(out[0])
+    if n_features == 0:
+        raise ValueError("X must contain at least one feature")
+    if any(len(row) != n_features for row in out):
+        raise ValueError("All samples in X must have the same number of features")
+    return out
