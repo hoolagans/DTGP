@@ -133,7 +133,6 @@ class DTGPClassifier:
             for sample_idx in range(len(X2)):
                 row = [class_scores[class_idx][sample_idx] for class_idx in range(len(self.classes_))]
                 if sum(row) <= 0.0:
-                    fallback = [max(MIN_FALLBACK_SCORE, self.classifiers_[c]["best_fitness"]) for c in self.classes_]
                     row = fallback[:]
                 total = sum(row)
                 probs.append([v / total for v in row])
@@ -358,7 +357,7 @@ class DTGPClassifier:
         params = self.get_params(deep=True)
         base_seed = self.random_state
         classes = self.classes_
-        n_workers = min(len(classes), max(1, os.cpu_count() or 1))
+        n_workers = min(len(classes), os.cpu_count() or 1)
 
         tasks = []
         for idx, class_label in enumerate(classes):

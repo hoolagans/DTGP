@@ -48,7 +48,7 @@ class TestDTGPClassifier(unittest.TestCase):
         clf1.fit(X, y)
         clf2.fit(X, y)
 
-        self.assertEqual(clf1.predict(X), clf2.predict(X))
+        self.assertListEqual(clf1.predict(X), clf2.predict(X))
         proba1 = clf1.predict_proba(X)
         proba2 = clf2.predict_proba(X)
         self.assertEqual(len(proba1), len(proba2))
