@@ -9,6 +9,7 @@ import math
 import random
 import statistics
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from typing import Any, Iterable, List, Sequence, Tuple
 
 MIN_FALLBACK_SCORE = 1e-12
@@ -355,7 +356,7 @@ class DTGPClassifier:
         params = self.get_params(deep=True)
         base_seed = self.random_state
         classes = self.classes_
-        n_workers = min(len(classes), max(1, os.cpu_count() or 1))
+        n_workers = min(len(classes), os.cpu_count() or 1)
 
         tasks = []
         for idx, class_label in enumerate(classes):
@@ -368,7 +369,7 @@ class DTGPClassifier:
             try:
                 with ProcessPoolExecutor(max_workers=n_workers) as executor:
                     results = list(executor.map(_train_binary_worker, tasks))
-            except Exception:
+            except (BrokenProcessPool, OSError, RuntimeError):
                 results = [_train_binary_worker(task) for task in tasks]
                 n_workers = 1
         else:
