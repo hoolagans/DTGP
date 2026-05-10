@@ -13,6 +13,8 @@ from concurrent.futures.process import BrokenProcessPool
 from typing import Any, Iterable, List, Sequence, Tuple
 
 MIN_FALLBACK_SCORE = 1e-12
+DIV_EPSILON = 1e-12
+DIV_FALLBACK = 0.0
 
 
 class DTGPClassifier:
@@ -219,7 +221,7 @@ class DTGPClassifier:
             "add": lambda a, b: a + b,
             "sub": lambda a, b: a - b,
             "mul": lambda a, b: a * b,
-            "div": lambda a, b: a / b if abs(b) > 1e-12 else 0.0,
+            "div": lambda a, b: a / b if abs(b) > DIV_EPSILON else DIV_FALLBACK,
             "min": lambda a, b: min(a, b),
             "max": lambda a, b: max(a, b),
         }
