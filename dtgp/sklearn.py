@@ -287,6 +287,8 @@ class DTGPClassifier:
 
     def _tree_depth(self, tree) -> int:
         kind = tree[0]
+        if kind in {"const", "var", "math1", "math2"}:
+            return 1
         if kind == "inter":
             return 2
         return 1 + max(self._tree_depth(tree[2]), self._tree_depth(tree[3]))
@@ -461,11 +463,18 @@ class DTGPClassifier:
         raw = self._raw_fitness(tree, X, y_bool)
         return max(raw, 1.0 - raw)
 
+    def _child_indexes(self, node) -> Tuple[int, ...]:
+        kind = node[0]
+        if kind in {"node", "inter", "math2"}:
+            return (2, 3)
+        if kind == "math1":
+            return (2,)
+        return ()
+
     def _collect_paths(self, tree, prefix: Tuple[int, ...] = ()) -> List[Tuple[int, ...]]:
         paths = [prefix]
-        if tree[0] == "node":
-            paths.extend(self._collect_paths(tree[2], prefix + (2,)))
-            paths.extend(self._collect_paths(tree[3], prefix + (3,)))
+        for child_idx in self._child_indexes(tree):
+            paths.extend(self._collect_paths(tree[child_idx], prefix + (child_idx,)))
         return paths
 
     def _get_subtree(self, tree, path: Tuple[int, ...]):
@@ -478,25 +487,44 @@ class DTGPClassifier:
         if not path:
             return replacement
         idx = path[0]
-        if tree[0] != "node":
-            return replacement
-        if idx == 2:
-            return (tree[0], tree[1], self._set_subtree(tree[2], path[1:], replacement), tree[3])
-        return (tree[0], tree[1], tree[2], self._set_subtree(tree[3], path[1:], replacement))
+        kind = tree[0]
+        if kind in {"node", "inter", "math2"}:
+            if idx == 2:
+                return (tree[0], tree[1], self._set_subtree(tree[2], path[1:], replacement), tree[3])
+            if idx == 3:
+                return (tree[0], tree[1], tree[2], self._set_subtree(tree[3], path[1:], replacement))
+            return tree
+        if kind == "math1":
+            if idx == 2:
+                return (tree[0], tree[1], self._set_subtree(tree[2], path[1:], replacement))
+            return tree
+        return tree
+
+    def _node_category(self, node) -> str:
+        return "bool" if node[0] in {"node", "inter"} else "value"
+
+    def _random_replacement_for(self, node):
+        if self._node_category(node) == "bool":
+            return self._random_branch(1, max(2, self.max_depth))
+        return self._random_value_expr()
 
     def _mutate(self, tree):
         paths = self._collect_paths(tree)
         target = self._rng.choice(paths)
-        replacement = self._random_branch(1, max(2, self.max_depth))
+        target_node = self._get_subtree(tree, target)
+        replacement = self._random_replacement_for(target_node)
         return self._set_subtree(tree, target, replacement)
 
     def _crossover(self, tree1, tree2):
         paths1 = self._collect_paths(tree1)
         paths2 = self._collect_paths(tree2)
         p1 = self._rng.choice(paths1)
-        p2 = self._rng.choice(paths2)
-
         s1 = self._get_subtree(tree1, p1)
+        compatible_paths2 = [p for p in paths2 if self._node_category(self._get_subtree(tree2, p)) == self._node_category(s1)]
+        if not compatible_paths2:
+            return tree1, tree2
+        p2 = self._rng.choice(compatible_paths2)
+
         s2 = self._get_subtree(tree2, p2)
 
         new1 = self._set_subtree(tree1, p1, s2)
