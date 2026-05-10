@@ -482,6 +482,7 @@ class DTGPClassifier:
             raise ValueError(f"selection_method must be one of: {valid_list}")
 
     def _model_complexity(self, tree) -> int:
+        """Return model complexity as total subtree path count (lower is simpler)."""
         return len(self._collect_paths(tree))
 
     def _child_indexes(self, node) -> Tuple[int, ...]:
@@ -560,6 +561,11 @@ class DTGPClassifier:
         return scored[0][0]
 
     def _pareto_tournament_select(self, models, X, y_bool):
+        """Return the full non-dominated front from one tournament sample.
+
+        Dominance is computed on two objectives: maximize fitness and minimize
+        model complexity.
+        """
         size = min(max(2, self.tournament_size), len(models))
         sample = self._rng.sample(models, size)
         metrics = {m: (self._fitness(m, X, y_bool), self._model_complexity(m)) for m in sample}
@@ -580,11 +586,13 @@ class DTGPClassifier:
         return front
 
     def _selection_candidates(self, models, X, y_bool):
+        """Return tournament candidates under configured selection strategy."""
         if self.selection_method == "pareto_tournament":
             return self._pareto_tournament_select(models, X, y_bool)
         return [self._tournament_select(models, X, y_bool)]
 
     def _select_parent(self, models, X, y_bool):
+        """Select one parent by sampling from strategy-specific tournament candidates."""
         candidates = self._selection_candidates(models, X, y_bool)
         return self._rng.choice(candidates)
 
