@@ -484,15 +484,6 @@ class DTGPClassifier:
     def _model_complexity(self, tree) -> int:
         return len(self._collect_paths(tree))
 
-    def _dominates(self, left, right, X, y_bool) -> bool:
-        left_fitness = self._fitness(left, X, y_bool)
-        right_fitness = self._fitness(right, X, y_bool)
-        left_complexity = self._model_complexity(left)
-        right_complexity = self._model_complexity(right)
-        no_worse = left_fitness >= right_fitness and left_complexity <= right_complexity
-        strictly_better = left_fitness > right_fitness or left_complexity < right_complexity
-        return no_worse and strictly_better
-
     def _child_indexes(self, node) -> Tuple[int, ...]:
         kind = node[0]
         if kind in {"node", "inter", "math2"}:
@@ -571,12 +562,21 @@ class DTGPClassifier:
     def _pareto_tournament_select(self, models, X, y_bool):
         size = min(max(2, self.tournament_size), len(models))
         sample = self._rng.sample(models, size)
+        metrics = {m: (self._fitness(m, X, y_bool), self._model_complexity(m)) for m in sample}
+
+        def dominates(left, right) -> bool:
+            left_fitness, left_complexity = metrics[left]
+            right_fitness, right_complexity = metrics[right]
+            no_worse = left_fitness >= right_fitness and left_complexity <= right_complexity
+            strictly_better = left_fitness > right_fitness or left_complexity < right_complexity
+            return no_worse and strictly_better
+
         front = []
         for candidate in sample:
-            if any(self._dominates(other, candidate, X, y_bool) for other in sample if other is not candidate):
+            if any(dominates(other, candidate) for other in sample if other is not candidate):
                 continue
             front.append(candidate)
-        front.sort(key=lambda m: (-self._fitness(m, X, y_bool), self._model_complexity(m)))
+        front.sort(key=lambda m: (-metrics[m][0], metrics[m][1]))
         return front
 
     def _selection_candidates(self, models, X, y_bool):

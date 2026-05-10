@@ -209,18 +209,28 @@ class TestDTGPClassifier(unittest.TestCase):
             clf.fit(X, y)
 
     def test_pareto_tournament_returns_non_dominated_front(self):
-        m1 = ("inter", "gt", ("var", 0), ("const", 0.0))
-        m2 = ("node", "and", m1, m1)
-        m3 = ("node", "and", m2, m2)
-        models = [m1, m2, m3]
+        X = [[3.0, 1.0], [2.0, 2.5], [1.0, 2.0], [4.0, 0.5], [0.5, 3.0], [3.5, 2.0]]
+        y_bool = [row[0] > row[1] for row in X]
 
-        scores = {m1: 0.70, m2: 0.85, m3: 0.80}
+        m1 = ("inter", "gt", ("var", 0), ("var", 1))
+        m2 = ("inter", "gt", ("var", 0), ("const", 2.0))
+        m3 = ("node", "and", m1, m2)
+        models = [m1, m2, m3]
         clf = DTGPClassifier(tournament_size=3, selection_method="pareto_tournament", random_state=37)
         clf._rng = random.Random(37)
-        clf._fitness = lambda tree, X, y_bool: scores[tree]  # type: ignore[method-assign]
+        front = clf._pareto_tournament_select(models, X, y_bool)
 
-        front = clf._pareto_tournament_select(models, [], [])
-        self.assertEqual(set(front), {m1, m2})
+        metrics = {m: (clf._fitness(m, X, y_bool), clf._model_complexity(m)) for m in models}
+
+        def dominates(left, right):
+            left_fitness, left_complexity = metrics[left]
+            right_fitness, right_complexity = metrics[right]
+            no_worse = left_fitness >= right_fitness and left_complexity <= right_complexity
+            strictly_better = left_fitness > right_fitness or left_complexity < right_complexity
+            return no_worse and strictly_better
+
+        expected_front = [m for m in models if not any(dominates(other, m) for other in models if other is not m)]
+        self.assertEqual(set(front), set(expected_front))
 
     def test_fit_with_pareto_selection_method(self):
         X = [[4.0, 1.0], [1.0, 4.0], [5.0, 2.0], [2.0, 5.0], [3.0, 1.0], [1.0, 3.0]]
