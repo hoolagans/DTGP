@@ -26,6 +26,7 @@ clf = DTGPClassifier(
     generations=40,
     max_depth=6,
     selection_method="tournament",
+    fitness_method="accuracy",
     random_state=42,
 )
 clf.fit(X, y)
@@ -89,6 +90,7 @@ This allows regression-like value expressions at the bottom of boolean trees.
 - `max_depth`: maximum tree depth
 - `tournament_size`: tournament selection size
 - `selection_method`: parent selection strategy (`"tournament"` or `"pareto_tournament"`)
+- `fitness_method`: fitness objective (`"accuracy"` or `"pearson_r2"`)
 - `random_state`: reproducibility seed
 - `show_training_curve`: print generation-by-generation best fitness
 
@@ -102,3 +104,10 @@ selection:
 
 For each tournament draw, DTGP computes the full non-dominated front and samples parents from
 that front.
+
+### Fitness methods
+
+Set `fitness_method` to choose the optimization target used by evolutionary scoring:
+
+- `"accuracy"`: maximize classification agreement (with inversion symmetry)
+- `"pearson_r2"`: maximize squared Pearson correlation between predictions and labels

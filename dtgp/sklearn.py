@@ -29,7 +29,8 @@ class DTGPClassifier:
         elitist_rate: float = 0.2,
         max_depth: int = 6,
         tournament_size: int = 5,
-        selection_method: str = "pareto_tournament",
+        selection_method: str = "tournament",
+        fitness_method: str = "accuracy",
         random_state: int | None = None,
         initial_population: list | None = None,
         show_training_curve: bool = False,
@@ -42,6 +43,7 @@ class DTGPClassifier:
         self.max_depth = max_depth
         self.tournament_size = tournament_size
         self.selection_method = selection_method
+        self.fitness_method = fitness_method
         self.random_state = random_state
         self.initial_population = [] if initial_population is None else initial_population
         self.show_training_curve = show_training_curve
@@ -57,6 +59,7 @@ class DTGPClassifier:
             "max_depth": self.max_depth,
             "tournament_size": self.tournament_size,
             "selection_method": self.selection_method,
+            "fitness_method": self.fitness_method,
             "random_state": self.random_state,
             "initial_population": copy.deepcopy(self.initial_population) if deep else self.initial_population,
             "show_training_curve": self.show_training_curve,
@@ -72,6 +75,7 @@ class DTGPClassifier:
     # --- fit/predict API ---
     def fit(self, X: Sequence[Sequence[float]], y: Sequence[Any]) -> "DTGPClassifier":
         self._validate_selection_method()
+        self._validate_fitness_method()
         X2 = _to_2d(X)
         y_list = list(y)
         if len(X2) != len(y_list):
@@ -473,13 +477,41 @@ class DTGPClassifier:
 
     def _fitness(self, tree, X: Sequence[Sequence[float]], y_bool: Sequence[bool]) -> float:
         raw = self._raw_fitness(tree, X, y_bool)
-        return max(raw, 1.0 - raw)
+        if self.fitness_method == "accuracy":
+            return max(raw, 1.0 - raw)
+        preds = [self._evaluate_model(tree, row) for row in X]
+        return self._pearson_r_squared(preds, y_bool)
+
+    def _pearson_r_squared(self, x: Sequence[bool], y: Sequence[bool]) -> float:
+        x_float = [1.0 if v else 0.0 for v in x]
+        y_float = [1.0 if v else 0.0 for v in y]
+        n = len(x_float)
+        if n == 0:
+            return 0.0
+
+        x_mean = sum(x_float) / n
+        y_mean = sum(y_float) / n
+        x_centered = [v - x_mean for v in x_float]
+        y_centered = [v - y_mean for v in y_float]
+        cov = sum(a * b for a, b in zip(x_centered, y_centered))
+        x_var = sum(a * a for a in x_centered)
+        y_var = sum(b * b for b in y_centered)
+        if x_var <= 0.0 or y_var <= 0.0:
+            return 0.0
+        corr = cov / math.sqrt(x_var * y_var)
+        return corr * corr
 
     def _validate_selection_method(self) -> None:
         valid = {"tournament", "pareto_tournament"}
         if self.selection_method not in valid:
             valid_list = ", ".join(sorted(valid))
             raise ValueError(f"selection_method must be one of: {valid_list}")
+
+    def _validate_fitness_method(self) -> None:
+        valid = {"accuracy", "pearson_r2"}
+        if self.fitness_method not in valid:
+            valid_list = ", ".join(sorted(valid))
+            raise ValueError(f"fitness_method must be one of: {valid_list}")
 
     def _model_complexity(self, tree) -> int:
         """Return model complexity as total subtree path count (lower is simpler)."""

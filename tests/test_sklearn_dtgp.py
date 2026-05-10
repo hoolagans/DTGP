@@ -63,13 +63,21 @@ class TestDTGPClassifier(unittest.TestCase):
         self.assertEqual(params["num_models"], 10)
         self.assertEqual(params["generations"], 20)
         self.assertEqual(params["selection_method"], "tournament")
+        self.assertEqual(params["fitness_method"], "accuracy")
         self.assertFalse(params["show_training_curve"])
 
-        returned = clf.set_params(num_models=15, generations=30, selection_method="pareto_tournament", show_training_curve=True)
+        returned = clf.set_params(
+            num_models=15,
+            generations=30,
+            selection_method="pareto_tournament",
+            fitness_method="pearson_r2",
+            show_training_curve=True,
+        )
         self.assertIs(returned, clf)
         self.assertEqual(clf.num_models, 15)
         self.assertEqual(clf.generations, 30)
         self.assertEqual(clf.selection_method, "pareto_tournament")
+        self.assertEqual(clf.fitness_method, "pearson_r2")
         self.assertTrue(clf.show_training_curve)
 
     def test_view_model_interpretable_format(self):
@@ -207,6 +215,13 @@ class TestDTGPClassifier(unittest.TestCase):
         with self.assertRaises(ValueError):
             clf.fit(X, y)
 
+    def test_invalid_fitness_method_raises(self):
+        X = [[1.0, 0.0], [0.0, 1.0], [2.0, 0.0], [0.0, 2.0]]
+        y = [1, 0, 1, 0]
+        clf = DTGPClassifier(fitness_method="not_supported", random_state=33, num_models=6, generations=2)
+        with self.assertRaises(ValueError):
+            clf.fit(X, y)
+
     def test_pareto_tournament_returns_non_dominated_front(self):
         X = [[3.0, 1.0], [2.0, 2.5], [1.0, 2.0], [4.0, 0.5], [0.5, 3.0], [3.5, 2.0]]
         y_bool = [row[0] > row[1] for row in X]
@@ -251,6 +266,22 @@ class TestDTGPClassifier(unittest.TestCase):
         clf.fit(X, y)
         pred = clf.predict(X)
         self.assertEqual(len(pred), len(y))
+
+    def test_fit_with_pearson_r2_fitness_method(self):
+        X = [[4.0, 1.0], [1.0, 4.0], [5.0, 2.0], [2.0, 5.0], [3.0, 1.0], [1.0, 3.0]]
+        y = [1 if row[0] > row[1] else 0 for row in X]
+
+        clf = DTGPClassifier(
+            random_state=43,
+            num_models=18,
+            generations=18,
+            fitness_method="pearson_r2",
+        )
+        clf.fit(X, y)
+        pred = clf.predict(X)
+        self.assertEqual(len(pred), len(y))
+        self.assertGreaterEqual(clf.best_fitness_, 0.0)
+        self.assertLessEqual(clf.best_fitness_, 1.0)
 
 
 if __name__ == "__main__":
