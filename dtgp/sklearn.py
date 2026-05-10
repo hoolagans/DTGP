@@ -29,7 +29,7 @@ class DTGPClassifier:
         elitist_rate: float = 0.2,
         max_depth: int = 6,
         tournament_size: int = 5,
-        selection_method: str = "tournament",
+        selection_method: str = "pareto_tournament",
         random_state: int | None = None,
         initial_population: list | None = None,
         show_training_curve: bool = False,
