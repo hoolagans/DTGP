@@ -162,6 +162,42 @@ class TestDTGPClassifier(unittest.TestCase):
         self.assertTrue(all(len(row) == 3 for row in proba))
         self.assertTrue(all(abs(sum(row) - 1.0) < 1e-9 for row in proba))
 
+    def test_leaf_variable_and_math_layers(self):
+        X = [
+            [1.0, 1.0],
+            [2.0, 1.0],
+            [1.0, 3.0],
+            [4.0, 2.0],
+            [0.0, 5.0],
+            [3.0, 2.0],
+        ]
+        y = [1 if (row[0] + 1.0) > abs(row[1] - 2.0) else 0 for row in X]
+        seeded_tree = (
+            "inter",
+            "gt",
+            ("math2", "add", ("var", 0), ("const", 1.0)),
+            ("math1", "abs", ("math2", "sub", ("var", 1), ("const", 2.0))),
+        )
+        clf = DTGPClassifier(
+            num_models=1,
+            generations=0,
+            crossover_rate=0.0,
+            mutation_rate=0.0,
+            elitist_rate=1.0,
+            random_state=5,
+            initial_population=[seeded_tree],
+        )
+        clf.fit(X, y)
+
+        pred = clf.predict(X)
+        self.assertEqual(len(pred), len(y))
+        self.assertGreaterEqual(clf.score(X, y), 0.95)
+
+        model_expr = clf.view_model()
+        self.assertIn("x[0]", model_expr)
+        self.assertIn("x[1]", model_expr)
+        self.assertIn("abs(", model_expr)
+
 
 if __name__ == "__main__":
     unittest.main()

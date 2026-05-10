@@ -7,7 +7,6 @@ import os
 import sys
 import math
 import random
-import statistics
 import warnings
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
@@ -185,22 +184,6 @@ class DTGPClassifier:
         return rendered[0] if n_models == 1 else rendered
 
     # --- DTGP internals ---
-    def _leaf_ops(self):
-        return {
-            "avg": lambda d: statistics.fmean(d) if d else 0.0,
-            "med": lambda d: statistics.median(d) if d else 0.0,
-            "mn": lambda d: min(d) if d else 0.0,
-            "mx": lambda d: max(d) if d else 0.0,
-            "diff": lambda d: (d[-1] - d[0]) if len(d) >= 2 else 0.0,
-            "diff2": lambda d: (d[1] - d[0]) if len(d) >= 2 else 0.0,
-            "diff3": lambda d: (d[2] - d[1]) if len(d) >= 3 else 0.0,
-            "chng": lambda d: (max(d) - min(d)) if d else 0.0,
-            "dev": lambda d: statistics.pstdev(d) if len(d) >= 2 else 0.0,
-            "getred": lambda d: d[0] if len(d) >= 1 else 0.0,
-            "getgreen": lambda d: d[1] if len(d) >= 2 else 0.0,
-            "getblue": lambda d: d[2] if len(d) >= 3 else 0.0,
-        }
-
     def _inter_ops(self):
         return {
             "ge": lambda a, b: a >= b,
@@ -220,16 +203,56 @@ class DTGPClassifier:
             "xor": lambda a, b: bool(a) ^ bool(b),
         }
 
-    def _random_leaf(self):
-        choices = list(self._leaf_ops().keys()) + ["const"]
-        op = self._rng.choice(choices)
-        if op == "const":
-            return ("const", self._rng.uniform(0.0, 1.0))
-        return ("leaf", op)
+    def _math_unary_ops(self):
+        return {
+            "neg": lambda a: -a,
+            "abs": lambda a: abs(a),
+            "sqrt": lambda a: math.sqrt(abs(a)),
+            "log1p": lambda a: math.log1p(abs(a)),
+            "sin": lambda a: math.sin(a),
+            "cos": lambda a: math.cos(a),
+            "tanh": lambda a: math.tanh(a),
+        }
+
+    def _math_binary_ops(self):
+        return {
+            "add": lambda a, b: a + b,
+            "sub": lambda a, b: a - b,
+            "mul": lambda a, b: a * b,
+            "div": lambda a, b: a / b if abs(b) > 1e-12 else a,
+            "min": lambda a, b: min(a, b),
+            "max": lambda a, b: max(a, b),
+        }
+
+    def _random_base_value(self):
+        if self._rng.random() < 0.65:
+            return ("var", self._rng.randrange(max(1, self.n_features_in_)))
+        return ("const", self._rng.uniform(-1.0, 1.0))
+
+    def _random_value_expr(self, depth: int = 0, max_depth: int = 3):
+        if depth >= max_depth:
+            return self._random_base_value()
+
+        if depth > 0 and self._rng.random() < 0.45:
+            return self._random_base_value()
+
+        draw = self._rng.random()
+        if draw < 0.35:
+            return self._random_base_value()
+        if draw < 0.65:
+            op = self._rng.choice(list(self._math_unary_ops().keys()))
+            return ("math1", op, self._random_value_expr(depth + 1, max_depth))
+        op = self._rng.choice(list(self._math_binary_ops().keys()))
+        return (
+            "math2",
+            op,
+            self._random_value_expr(depth + 1, max_depth),
+            self._random_value_expr(depth + 1, max_depth),
+        )
 
     def _random_inter(self):
         op = self._rng.choice(list(self._inter_ops().keys()))
-        return ("inter", op, self._random_leaf(), self._random_leaf())
+        return ("inter", op, self._random_value_expr(), self._random_value_expr())
 
     def _random_branch(self, depth: int, max_depth: int):
         if depth >= max_depth:
@@ -268,47 +291,79 @@ class DTGPClassifier:
             return 2
         return 1 + max(self._tree_depth(tree[2]), self._tree_depth(tree[3]))
 
-    def _eval_leaf(self, leaf, data: Sequence[float]) -> float:
-        if leaf[0] == "const":
-            return float(leaf[1])
-        value = self._leaf_ops()[leaf[1]](data)
+    def _sanitize_value(self, value: Any) -> float:
         if isinstance(value, (int, float)) and math.isfinite(float(value)):
-            return float(value)
+            clipped = float(value)
+            return max(-1e12, min(1e12, clipped))
         return 0.0
+
+    def _eval_value(self, value_node, data: Sequence[float]) -> float:
+        kind = value_node[0]
+        if kind == "const":
+            return self._sanitize_value(value_node[1])
+        if kind == "var":
+            idx = int(value_node[1])
+            if 0 <= idx < len(data):
+                return self._sanitize_value(data[idx])
+            return 0.0
+        if kind == "math1":
+            _, op, child = value_node
+            inner = self._eval_value(child, data)
+            return self._sanitize_value(self._math_unary_ops()[op](inner))
+        _, op, left, right = value_node
+        a = self._eval_value(left, data)
+        b = self._eval_value(right, data)
+        return self._sanitize_value(self._math_binary_ops()[op](a, b))
 
     def _evaluate_model(self, tree, data: Sequence[float]) -> bool:
         kind = tree[0]
         if kind == "inter":
             _, op, left, right = tree
-            return bool(self._inter_ops()[op](self._eval_leaf(left, data), self._eval_leaf(right, data)))
+            return bool(self._inter_ops()[op](self._eval_value(left, data), self._eval_value(right, data)))
         _, op, left, right = tree
         return bool(self._node_ops()[op](self._evaluate_model(left, data), self._evaluate_model(right, data)))
 
-    def _leaf_to_expression(self, leaf) -> str:
-        if leaf[0] == "const":
-            return f"{float(leaf[1]):.6g}"
-
-        leaf_names = {
-            "avg": "Avg",
-            "med": "Med",
-            "mn": "Mn",
-            "mx": "Mx",
-            "diff": "Diff",
-            "diff2": "Diff2",
-            "diff3": "Diff3",
-            "chng": "Chng",
-            "dev": "Dev",
-            "getred": "GetRed",
-            "getgreen": "GetGreen",
-            "getblue": "GetBlue",
+    def _value_to_expression(self, value_node) -> str:
+        kind = value_node[0]
+        if kind == "const":
+            return f"{float(value_node[1]):.6g}"
+        if kind == "var":
+            return f"x[{int(value_node[1])}]"
+        if kind == "math1":
+            _, op, child = value_node
+            unary_names = {
+                "neg": "-",
+                "abs": "abs",
+                "sqrt": "sqrt",
+                "log1p": "log1p",
+                "sin": "sin",
+                "cos": "cos",
+                "tanh": "tanh",
+            }
+            child_expr = self._value_to_expression(child)
+            if op == "neg":
+                return f"(-{child_expr})"
+            return f"{unary_names[op]}({child_expr})"
+        _, op, left, right = value_node
+        binary_names = {
+            "add": "+",
+            "sub": "-",
+            "mul": "*",
+            "div": "/",
+            "min": "min",
+            "max": "max",
         }
-        return f"{leaf_names[leaf[1]]}(data)"
+        left_expr = self._value_to_expression(left)
+        right_expr = self._value_to_expression(right)
+        if op in {"min", "max"}:
+            return f"{binary_names[op]}({left_expr}, {right_expr})"
+        return f"({left_expr} {binary_names[op]} {right_expr})"
 
     def _tree_to_expression(self, tree) -> str:
         if tree[0] == "inter":
             _, op, left, right = tree
             cmp_names = {"ge": ">=", "gt": ">", "le": "<=", "lt": "<", "eq": "==", "ne": "!="}
-            return f"({self._leaf_to_expression(left)} {cmp_names[op]} {self._leaf_to_expression(right)})"
+            return f"({self._value_to_expression(left)} {cmp_names[op]} {self._value_to_expression(right)})"
 
         _, op, left, right = tree
         node_names = {"and": "AND", "or": "OR", "nand": "NAND", "nor": "NOR", "xor": "XOR"}
@@ -320,7 +375,7 @@ class DTGPClassifier:
         if tree[0] == "inter":
             _, op, left, right = tree
             cmp_names = {"ge": ">=", "gt": ">", "le": "<=", "lt": "<", "eq": "==", "ne": "!="}
-            return [f"{indent}└─ {self._leaf_to_expression(left)} {cmp_names[op]} {self._leaf_to_expression(right)}"]
+            return [f"{indent}└─ {self._value_to_expression(left)} {cmp_names[op]} {self._value_to_expression(right)}"]
 
         _, op, left, right = tree
         node_names = {"and": "AND", "or": "OR", "nand": "NAND", "nor": "NOR", "xor": "XOR"}
@@ -338,6 +393,7 @@ class DTGPClassifier:
         return f"Generation {generation}/{total_generations} |{bar}| best_fitness={best_fitness:.4f}"
 
     def _fit_binary_problem(self, X, y_bool, curve_label: str | None = None):
+        self.n_features_in_ = len(X[0]) if X else 0
         self._rng = random.Random(self.random_state)
         models, history = self._evolve(X, y_bool, curve_label=curve_label)
         best_tree = models[0]
