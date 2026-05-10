@@ -356,12 +356,12 @@ class DTGPClassifier:
         params = self.get_params(deep=True)
         base_seed = self.random_state
         classes = self.classes_
-        n_workers = min(len(classes), os.cpu_count() or 1)
+        n_workers = min(len(classes), max(1, os.cpu_count() or 1))
 
         tasks = []
         for idx, class_label in enumerate(classes):
             task_params = dict(params)
-            task_params["random_state"] = None if base_seed is None else int(base_seed) + idx + 1
+            task_params["random_state"] = None if base_seed is None else base_seed + idx + 1
             y_bool = [label == class_label for label in y_list]
             tasks.append((class_label, X, y_bool, task_params))
 
