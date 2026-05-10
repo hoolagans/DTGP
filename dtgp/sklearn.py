@@ -29,6 +29,7 @@ class DTGPClassifier:
         elitist_rate: float = 0.2,
         max_depth: int = 6,
         tournament_size: int = 5,
+        selection_method: str = "tournament",
         random_state: int | None = None,
         initial_population: list | None = None,
         show_training_curve: bool = False,
@@ -40,6 +41,7 @@ class DTGPClassifier:
         self.elitist_rate = elitist_rate
         self.max_depth = max_depth
         self.tournament_size = tournament_size
+        self.selection_method = selection_method
         self.random_state = random_state
         self.initial_population = [] if initial_population is None else initial_population
         self.show_training_curve = show_training_curve
@@ -54,6 +56,7 @@ class DTGPClassifier:
             "elitist_rate": self.elitist_rate,
             "max_depth": self.max_depth,
             "tournament_size": self.tournament_size,
+            "selection_method": self.selection_method,
             "random_state": self.random_state,
             "initial_population": copy.deepcopy(self.initial_population) if deep else self.initial_population,
             "show_training_curve": self.show_training_curve,
@@ -68,6 +71,7 @@ class DTGPClassifier:
 
     # --- fit/predict API ---
     def fit(self, X: Sequence[Sequence[float]], y: Sequence[Any]) -> "DTGPClassifier":
+        self._validate_selection_method()
         X2 = _to_2d(X)
         y_list = list(y)
         if len(X2) != len(y_list):
@@ -471,6 +475,24 @@ class DTGPClassifier:
         raw = self._raw_fitness(tree, X, y_bool)
         return max(raw, 1.0 - raw)
 
+    def _validate_selection_method(self) -> None:
+        valid = {"tournament", "pareto_tournament"}
+        if self.selection_method not in valid:
+            valid_list = ", ".join(sorted(valid))
+            raise ValueError(f"selection_method must be one of: {valid_list}")
+
+    def _model_complexity(self, tree) -> int:
+        return len(self._collect_paths(tree))
+
+    def _dominates(self, left, right, X, y_bool) -> bool:
+        left_fitness = self._fitness(left, X, y_bool)
+        right_fitness = self._fitness(right, X, y_bool)
+        left_complexity = self._model_complexity(left)
+        right_complexity = self._model_complexity(right)
+        no_worse = left_fitness >= right_fitness and left_complexity <= right_complexity
+        strictly_better = left_fitness > right_fitness or left_complexity < right_complexity
+        return no_worse and strictly_better
+
     def _child_indexes(self, node) -> Tuple[int, ...]:
         kind = node[0]
         if kind in {"node", "inter", "math2"}:
@@ -546,6 +568,26 @@ class DTGPClassifier:
         scored.sort(key=lambda t: t[1], reverse=True)
         return scored[0][0]
 
+    def _pareto_tournament_select(self, models, X, y_bool):
+        size = min(max(2, self.tournament_size), len(models))
+        sample = self._rng.sample(models, size)
+        front = []
+        for candidate in sample:
+            if any(self._dominates(other, candidate, X, y_bool) for other in sample if other is not candidate):
+                continue
+            front.append(candidate)
+        front.sort(key=lambda m: (-self._fitness(m, X, y_bool), self._model_complexity(m)))
+        return front
+
+    def _selection_candidates(self, models, X, y_bool):
+        if self.selection_method == "pareto_tournament":
+            return self._pareto_tournament_select(models, X, y_bool)
+        return [self._tournament_select(models, X, y_bool)]
+
+    def _select_parent(self, models, X, y_bool):
+        candidates = self._selection_candidates(models, X, y_bool)
+        return self._rng.choice(candidates)
+
     def _evolve(self, X, y_bool, curve_label: str | None = None):
         models = list(self.initial_population)
         while len(models) < self.num_models:
@@ -567,13 +609,13 @@ class DTGPClassifier:
             elite_count = int(self.elitist_rate * self.num_models)
 
             while len(new_models) < cross_target:
-                p1 = self._tournament_select(models, X, y_bool)
-                p2 = self._tournament_select(models, X, y_bool)
+                p1 = self._select_parent(models, X, y_bool)
+                p2 = self._select_parent(models, X, y_bool)
                 c1, c2 = self._crossover(p1, p2)
                 new_models.extend([c1, c2])
 
             while len(new_models) < mut_target:
-                p = self._tournament_select(models, X, y_bool)
+                p = self._select_parent(models, X, y_bool)
                 new_models.append(self._mutate(p))
 
             scored = sorted(((m, self._fitness(m, X, y_bool)) for m in models), key=lambda t: t[1], reverse=True)

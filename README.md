@@ -25,6 +25,7 @@ clf = DTGPClassifier(
     num_models=40,
     generations=40,
     max_depth=6,
+    selection_method="tournament",
     random_state=42,
 )
 clf.fit(X, y)
@@ -87,5 +88,17 @@ This allows regression-like value expressions at the bottom of boolean trees.
 - `elitist_rate`: elite carryover fraction
 - `max_depth`: maximum tree depth
 - `tournament_size`: tournament selection size
+- `selection_method`: parent selection strategy (`"tournament"` or `"pareto_tournament"`)
 - `random_state`: reproducibility seed
 - `show_training_curve`: print generation-by-generation best fitness
+
+### Pareto tournament selection
+
+Set `selection_method="pareto_tournament"` to optimize with two objectives during tournament
+selection:
+
+- maximize fitness (classification performance)
+- minimize complexity (tree size)
+
+For each tournament draw, DTGP computes the full non-dominated front and samples parents from
+that front.

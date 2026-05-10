@@ -1,4 +1,5 @@
 import unittest
+import random
 from contextlib import redirect_stderr
 from io import StringIO
 
@@ -62,12 +63,14 @@ class TestDTGPClassifier(unittest.TestCase):
         params = clf.get_params()
         self.assertEqual(params["num_models"], 10)
         self.assertEqual(params["generations"], 20)
+        self.assertEqual(params["selection_method"], "tournament")
         self.assertFalse(params["show_training_curve"])
 
-        returned = clf.set_params(num_models=15, generations=30, show_training_curve=True)
+        returned = clf.set_params(num_models=15, generations=30, selection_method="pareto_tournament", show_training_curve=True)
         self.assertIs(returned, clf)
         self.assertEqual(clf.num_models, 15)
         self.assertEqual(clf.generations, 30)
+        self.assertEqual(clf.selection_method, "pareto_tournament")
         self.assertTrue(clf.show_training_curve)
 
     def test_view_model_interpretable_format(self):
@@ -197,6 +200,41 @@ class TestDTGPClassifier(unittest.TestCase):
         self.assertIn("x[0]", model_expr)
         self.assertIn("x[1]", model_expr)
         self.assertIn("abs(", model_expr)
+
+    def test_invalid_selection_method_raises(self):
+        X = [[1.0, 0.0], [0.0, 1.0], [2.0, 0.0], [0.0, 2.0]]
+        y = [1, 0, 1, 0]
+        clf = DTGPClassifier(selection_method="not_supported", random_state=31, num_models=6, generations=2)
+        with self.assertRaises(ValueError):
+            clf.fit(X, y)
+
+    def test_pareto_tournament_returns_non_dominated_front(self):
+        m1 = ("inter", "gt", ("var", 0), ("const", 0.0))
+        m2 = ("node", "and", m1, m1)
+        m3 = ("node", "and", m2, m2)
+        models = [m1, m2, m3]
+
+        scores = {m1: 0.70, m2: 0.85, m3: 0.80}
+        clf = DTGPClassifier(tournament_size=3, selection_method="pareto_tournament", random_state=37)
+        clf._rng = random.Random(37)
+        clf._fitness = lambda tree, X, y_bool: scores[tree]  # type: ignore[method-assign]
+
+        front = clf._pareto_tournament_select(models, [], [])
+        self.assertEqual(set(front), {m1, m2})
+
+    def test_fit_with_pareto_selection_method(self):
+        X = [[4.0, 1.0], [1.0, 4.0], [5.0, 2.0], [2.0, 5.0], [3.0, 1.0], [1.0, 3.0]]
+        y = [1 if row[0] > row[1] else 0 for row in X]
+
+        clf = DTGPClassifier(
+            random_state=41,
+            num_models=18,
+            generations=18,
+            selection_method="pareto_tournament",
+        )
+        clf.fit(X, y)
+        pred = clf.predict(X)
+        self.assertEqual(len(pred), len(y))
 
 
 if __name__ == "__main__":
