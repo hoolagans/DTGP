@@ -49,6 +49,7 @@ class TestDTGPClassifier(unittest.TestCase):
         clf2.fit(X, y)
 
         self.assertEqual(clf1.predict(X), clf2.predict(X))
+        self.assertEqual(clf1.predict_proba(X), clf2.predict_proba(X))
 
     def test_get_set_params(self):
         clf = DTGPClassifier(num_models=10, generations=20, random_state=3)
