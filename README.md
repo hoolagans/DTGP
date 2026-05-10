@@ -25,8 +25,8 @@ clf = DTGPClassifier(
     num_models=40,
     generations=40,
     max_depth=6,
-    selection_method="tournament",
-    fitness_method="accuracy",
+    selection_method="pareto_tournament",
+    fitness_method="pearson_r2",
     random_state=42,
 )
 clf.fit(X, y)

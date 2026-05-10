@@ -62,8 +62,8 @@ class TestDTGPClassifier(unittest.TestCase):
         params = clf.get_params()
         self.assertEqual(params["num_models"], 10)
         self.assertEqual(params["generations"], 20)
-        self.assertEqual(params["selection_method"], "tournament")
-        self.assertEqual(params["fitness_method"], "accuracy")
+        self.assertEqual(params["selection_method"], "pareto_tournament")
+        self.assertEqual(params["fitness_method"], "pearson_r2")
         self.assertFalse(params["show_training_curve"])
 
         returned = clf.set_params(
