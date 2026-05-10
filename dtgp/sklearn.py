@@ -225,8 +225,10 @@ class DTGPClassifier:
         }
 
     def _random_base_value(self):
+        if self.n_features_in_ <= 0:
+            return ("const", self._rng.uniform(-1.0, 1.0))
         if self._rng.random() < 0.65:
-            return ("var", self._rng.randrange(max(1, self.n_features_in_)))
+            return ("var", self._rng.randrange(self.n_features_in_))
         return ("const", self._rng.uniform(-1.0, 1.0))
 
     def _random_value_expr(self, depth: int = 0, max_depth: int = 3):
@@ -287,8 +289,12 @@ class DTGPClassifier:
 
     def _tree_depth(self, tree) -> int:
         kind = tree[0]
-        if kind in {"const", "var", "math1", "math2"}:
+        if kind in {"const", "var"}:
             return 1
+        if kind == "math1":
+            return 1 + self._tree_depth(tree[2])
+        if kind == "math2":
+            return 1 + max(self._tree_depth(tree[2]), self._tree_depth(tree[3]))
         if kind == "inter":
             return 2
         return 1 + max(self._tree_depth(tree[2]), self._tree_depth(tree[3]))
