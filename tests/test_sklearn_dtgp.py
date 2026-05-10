@@ -162,7 +162,7 @@ class TestDTGPClassifier(unittest.TestCase):
         self.assertTrue(all(len(row) == 3 for row in proba))
         self.assertTrue(all(abs(sum(row) - 1.0) < 1e-9 for row in proba))
 
-    def test_leaf_variable_and_math_layers(self):
+    def test_seeded_tree_with_nested_math_operations(self):
         X = [
             [1.0, 1.0],
             [2.0, 1.0],

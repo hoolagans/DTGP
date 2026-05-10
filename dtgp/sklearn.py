@@ -219,7 +219,7 @@ class DTGPClassifier:
             "add": lambda a, b: a + b,
             "sub": lambda a, b: a - b,
             "mul": lambda a, b: a * b,
-            "div": lambda a, b: a / b if abs(b) > 1e-12 else a,
+            "div": lambda a, b: a / b if abs(b) > 1e-12 else 0.0,
             "min": lambda a, b: min(a, b),
             "max": lambda a, b: max(a, b),
         }
@@ -296,7 +296,7 @@ class DTGPClassifier:
         if kind == "math2":
             return 1 + max(self._tree_depth(tree[2]), self._tree_depth(tree[3]))
         if kind == "inter":
-            return 2
+            return 1 + max(self._tree_depth(tree[2]), self._tree_depth(tree[3]))
         return 1 + max(self._tree_depth(tree[2]), self._tree_depth(tree[3]))
 
     def _sanitize_value(self, value: Any) -> float:
