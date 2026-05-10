@@ -11,6 +11,8 @@ import statistics
 from concurrent.futures import ProcessPoolExecutor
 from typing import Any, Iterable, List, Sequence, Tuple
 
+MIN_FALLBACK_SCORE = 1e-12
+
 
 class DTGPClassifier:
     """Decision Tree Genetic Programming classifier with sklearn-style API."""
@@ -124,7 +126,7 @@ class DTGPClassifier:
                     pred = [not p for p in pred]
                 class_scores.append([model["best_fitness"] if p else 0.0 for p in pred])
 
-            fallback = [max(1e-12, self.classifiers_[c]["best_fitness"]) for c in self.classes_]
+            fallback = [max(MIN_FALLBACK_SCORE, self.classifiers_[c]["best_fitness"]) for c in self.classes_]
             probs: List[List[float]] = []
             for sample_idx in range(len(X2)):
                 row = [class_scores[class_idx][sample_idx] for class_idx in range(len(self.classes_))]
