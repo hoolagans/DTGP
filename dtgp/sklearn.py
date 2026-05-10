@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import copy
+import os
 import sys
 import math
 import random
 import statistics
+from concurrent.futures import ProcessPoolExecutor
 from typing import Any, Iterable, List, Sequence, Tuple
 
 
@@ -69,24 +71,25 @@ class DTGPClassifier:
             raise ValueError("X and y must not be empty")
 
         classes = sorted(set(y_list))
-        if len(classes) != 2:
-            raise ValueError("DTGPClassifier currently supports binary classification only")
+        if len(classes) < 2:
+            raise ValueError("DTGPClassifier requires at least two classes")
 
+        self.classes_ = classes
+        self.n_features_in_ = len(X2[0])
+
+        if len(classes) > 2:
+            return self._fit_multiclass_ova(X2, y_list)
+
+        self.multiclass_strategy_ = None
         self.classes_ = classes
         positive_class = classes[1]
         y_bool = [label == positive_class for label in y_list]
-        self.n_features_in_ = len(X2[0])
-
-        self._rng = random.Random(self.random_state)
-        models, history = self._evolve(X2, y_bool)
-
-        best_tree = models[0]
-        raw_fit = self._raw_fitness(best_tree, X2, y_bool)
-        self.invert_output_ = raw_fit < 0.5
-        self.best_tree_ = best_tree
-        self.population_ = models
-        self.training_curve_ = history
-        self.best_fitness_ = self._fitness(best_tree, X2, y_bool)
+        fitted = self._fit_binary_problem(X2, y_bool)
+        self.invert_output_ = fitted["invert_output"]
+        self.best_tree_ = fitted["best_tree"]
+        self.population_ = fitted["population"]
+        self.training_curve_ = fitted["training_curve"]
+        self.best_fitness_ = fitted["best_fitness"]
         return self
 
     def predict(self, X: Sequence[Sequence[float]]) -> List[Any]:
@@ -94,6 +97,10 @@ class DTGPClassifier:
         X2 = _to_2d(X)
         if any(len(row) != self.n_features_in_ for row in X2):
             raise ValueError("X has a different number of features than seen during fit")
+
+        if self.multiclass_strategy_ == "one_vs_rest":
+            proba = self.predict_proba(X2)
+            return [self.classes_[max(range(len(row)), key=row.__getitem__)] for row in proba]
 
         bool_pred = [self._evaluate_model(self.best_tree_, row) for row in X2]
         if self.invert_output_:
@@ -103,6 +110,30 @@ class DTGPClassifier:
         return [pos if p else neg for p in bool_pred]
 
     def predict_proba(self, X: Sequence[Sequence[float]]) -> List[List[float]]:
+        self._require_fitted()
+        X2 = _to_2d(X)
+        if any(len(row) != self.n_features_in_ for row in X2):
+            raise ValueError("X has a different number of features than seen during fit")
+
+        if self.multiclass_strategy_ == "one_vs_rest":
+            class_scores: List[List[float]] = []
+            for class_label in self.classes_:
+                model = self.classifiers_[class_label]
+                pred = [self._evaluate_model(model["best_tree"], row) for row in X2]
+                if model["invert_output"]:
+                    pred = [not p for p in pred]
+                class_scores.append([model["best_fitness"] if p else 0.0 for p in pred])
+
+            fallback = [max(1e-12, self.classifiers_[c]["best_fitness"]) for c in self.classes_]
+            probs: List[List[float]] = []
+            for sample_idx in range(len(X2)):
+                row = [class_scores[class_idx][sample_idx] for class_idx in range(len(self.classes_))]
+                if sum(row) <= 0.0:
+                    row = fallback[:]
+                total = sum(row)
+                probs.append([v / total for v in row])
+            return probs
+
         preds = self.predict(X)
         neg, pos = self.classes_[0], self.classes_[1]
         return [[1.0, 0.0] if label == neg else [0.0, 1.0] for label in preds]
@@ -302,6 +333,62 @@ class DTGPClassifier:
         bar = "#" * filled + "-" * (width - filled)
         return f"Generation {generation}/{total_generations} |{bar}| best_fitness={best_fitness:.4f}"
 
+    def _fit_binary_problem(self, X, y_bool, curve_label: str | None = None):
+        self._rng = random.Random(self.random_state)
+        models, history = self._evolve(X, y_bool, curve_label=curve_label)
+        best_tree = models[0]
+        raw_fit = self._raw_fitness(best_tree, X, y_bool)
+        invert_output = raw_fit < 0.5
+        best_fitness = self._fitness(best_tree, X, y_bool)
+        return {
+            "best_tree": best_tree,
+            "population": models,
+            "invert_output": invert_output,
+            "best_fitness": best_fitness,
+            "training_curve": history,
+        }
+
+    def _fit_multiclass_ova(self, X, y_list):
+        self.multiclass_strategy_ = "one_vs_rest"
+        params = self.get_params(deep=True)
+        base_seed = self.random_state
+        classes = self.classes_
+        n_workers = min(len(classes), max(1, os.cpu_count() or 1))
+
+        tasks = []
+        for idx, class_label in enumerate(classes):
+            task_params = dict(params)
+            task_params["random_state"] = None if base_seed is None else int(base_seed) + idx + 1
+            y_bool = [label == class_label for label in y_list]
+            tasks.append((class_label, X, y_bool, task_params))
+
+        if n_workers > 1:
+            try:
+                with ProcessPoolExecutor(max_workers=n_workers) as executor:
+                    results = list(executor.map(_train_binary_worker, tasks))
+            except Exception:
+                results = [_train_binary_worker(task) for task in tasks]
+                n_workers = 1
+        else:
+            results = [_train_binary_worker(task) for task in tasks]
+
+        self.parallel_workers_ = n_workers
+        self.classifiers_ = {class_label: fitted for class_label, fitted in results}
+        self.class_training_curves_ = {
+            class_label: fitted["training_curve"] for class_label, fitted in self.classifiers_.items()
+        }
+        self.class_best_fitness_ = {
+            class_label: fitted["best_fitness"] for class_label, fitted in self.classifiers_.items()
+        }
+
+        representative = self.classifiers_[classes[0]]
+        self.invert_output_ = representative["invert_output"]
+        self.best_tree_ = representative["best_tree"]
+        self.population_ = representative["population"]
+        self.training_curve_ = representative["training_curve"]
+        self.best_fitness_ = representative["best_fitness"]
+        return self
+
     def _raw_fitness(self, tree, X: Sequence[Sequence[float]], y_bool: Sequence[bool]) -> float:
         preds = [self._evaluate_model(tree, row) for row in X]
         return sum(a == b for a, b in zip(preds, y_bool)) / len(X)
@@ -359,7 +446,7 @@ class DTGPClassifier:
         scored.sort(key=lambda t: t[1], reverse=True)
         return scored[0][0]
 
-    def _evolve(self, X, y_bool):
+    def _evolve(self, X, y_bool, curve_label: str | None = None):
         models = list(self.initial_population)
         while len(models) < self.num_models:
             models.append(self._random_tree(self.max_depth))
@@ -367,7 +454,10 @@ class DTGPClassifier:
         initial_best = max(self._fitness(m, X, y_bool) for m in models)
         history = [initial_best]
         if self.show_training_curve:
-            print(self._training_curve_line(0, self.generations, initial_best), file=sys.stderr, flush=True)
+            line = self._training_curve_line(0, self.generations, initial_best)
+            if curve_label:
+                line = f"[{curve_label}] {line}"
+            print(line, file=sys.stderr, flush=True)
 
         for gen_idx in range(self.generations):
             new_models = []
@@ -400,15 +490,32 @@ class DTGPClassifier:
             best_now = max(self._fitness(m, X, y_bool) for m in models)
             history.append(best_now)
             if self.show_training_curve:
-                print(self._training_curve_line(gen_idx + 1, self.generations, best_now), file=sys.stderr, flush=True)
+                line = self._training_curve_line(gen_idx + 1, self.generations, best_now)
+                if curve_label:
+                    line = f"[{curve_label}] {line}"
+                print(line, file=sys.stderr, flush=True)
 
         final_scored = sorted(((m, self._fitness(m, X, y_bool)) for m in models), key=lambda t: t[1], reverse=True)
         return [m for m, _ in final_scored], history
 
     def _require_fitted(self):
-        required = ["best_tree_", "classes_", "n_features_in_", "invert_output_"]
+        required = ["classes_", "n_features_in_"]
         if not all(hasattr(self, name) for name in required):
             raise ValueError("This DTGPClassifier instance is not fitted yet. Call 'fit' first.")
+        if getattr(self, "multiclass_strategy_", None) == "one_vs_rest":
+            if not hasattr(self, "classifiers_"):
+                raise ValueError("This DTGPClassifier instance is not fitted yet. Call 'fit' first.")
+        else:
+            binary_required = ["best_tree_", "invert_output_"]
+            if not all(hasattr(self, name) for name in binary_required):
+                raise ValueError("This DTGPClassifier instance is not fitted yet. Call 'fit' first.")
+
+
+def _train_binary_worker(task):
+    class_label, X, y_bool, params = task
+    model = DTGPClassifier(**params)
+    fitted = model._fit_binary_problem(X, y_bool, curve_label=f"class={class_label}")
+    return class_label, fitted
 
 
 def _flatten_row(row: Iterable[Any]) -> List[float]:

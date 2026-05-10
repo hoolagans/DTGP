@@ -111,6 +111,50 @@ class TestDTGPClassifier(unittest.TestCase):
         self.assertIn("Generation 0/5", live_text)
         self.assertIn("Generation 5/5", live_text)
 
+    def test_multiclass_one_vs_rest_training(self):
+        X = [
+            [9.0, 1.0, 1.0],
+            [8.0, 2.0, 1.0],
+            [1.0, 9.0, 1.0],
+            [2.0, 8.0, 1.0],
+            [1.0, 1.0, 9.0],
+            [1.0, 2.0, 8.0],
+            [7.0, 2.0, 1.0],
+            [2.0, 7.0, 1.0],
+            [1.0, 2.0, 7.0],
+        ]
+        y = [0, 0, 1, 1, 2, 2, 0, 1, 2]
+
+        clf = DTGPClassifier(random_state=19, num_models=16, generations=16)
+        clf.fit(X, y)
+
+        self.assertEqual(clf.multiclass_strategy_, "one_vs_rest")
+        self.assertEqual(set(clf.classifiers_.keys()), set(clf.classes_))
+        self.assertGreaterEqual(clf.parallel_workers_, 1)
+
+        pred = clf.predict(X)
+        self.assertEqual(len(pred), len(y))
+        self.assertGreaterEqual(clf.score(X, y), 0.55)
+
+    def test_multiclass_predict_proba_shape(self):
+        X = [
+            [10.0, 0.5, 0.5],
+            [0.5, 10.0, 0.5],
+            [0.5, 0.5, 10.0],
+            [8.0, 1.5, 1.0],
+            [1.0, 8.0, 1.5],
+            [1.5, 1.0, 8.0],
+        ]
+        y = [0, 1, 2, 0, 1, 2]
+
+        clf = DTGPClassifier(random_state=23, num_models=12, generations=12)
+        clf.fit(X, y)
+        proba = clf.predict_proba(X)
+
+        self.assertEqual(len(proba), len(X))
+        self.assertTrue(all(len(row) == 3 for row in proba))
+        self.assertTrue(all(abs(sum(row) - 1.0) < 1e-9 for row in proba))
+
 
 if __name__ == "__main__":
     unittest.main()
