@@ -1,5 +1,4 @@
 import unittest
-import random
 from contextlib import redirect_stderr
 from io import StringIO
 
@@ -216,8 +215,15 @@ class TestDTGPClassifier(unittest.TestCase):
         m2 = ("inter", "gt", ("var", 0), ("const", 2.0))
         m3 = ("node", "and", m1, m2)
         models = [m1, m2, m3]
-        clf = DTGPClassifier(tournament_size=3, selection_method="pareto_tournament", random_state=37)
-        clf._rng = random.Random(37)
+        clf = DTGPClassifier(
+            tournament_size=3,
+            selection_method="pareto_tournament",
+            random_state=37,
+            num_models=3,
+            generations=0,
+            initial_population=models,
+        )
+        clf.fit(X, [1 if v else 0 for v in y_bool])
         front = clf._pareto_tournament_select(models, X, y_bool)
 
         metrics = {m: (clf._fitness(m, X, y_bool), clf._model_complexity(m)) for m in models}
