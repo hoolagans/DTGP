@@ -8,6 +8,7 @@ import sys
 import math
 import random
 import statistics
+import warnings
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from typing import Any, Iterable, List, Sequence, Tuple
@@ -132,6 +133,7 @@ class DTGPClassifier:
             for sample_idx in range(len(X2)):
                 row = [class_scores[class_idx][sample_idx] for class_idx in range(len(self.classes_))]
                 if sum(row) <= 0.0:
+                    fallback = [max(MIN_FALLBACK_SCORE, self.classifiers_[c]["best_fitness"]) for c in self.classes_]
                     row = fallback[:]
                 total = sum(row)
                 probs.append([v / total for v in row])
@@ -370,6 +372,10 @@ class DTGPClassifier:
                 with ProcessPoolExecutor(max_workers=n_workers) as executor:
                     results = list(executor.map(_train_binary_worker, tasks))
             except (BrokenProcessPool, OSError, RuntimeError):
+                warnings.warn(
+                    "Parallel one-vs-rest training failed; falling back to sequential execution.",
+                    RuntimeWarning,
+                )
                 results = [_train_binary_worker(task) for task in tasks]
                 n_workers = 1
         else:

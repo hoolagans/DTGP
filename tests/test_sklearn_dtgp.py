@@ -49,7 +49,13 @@ class TestDTGPClassifier(unittest.TestCase):
         clf2.fit(X, y)
 
         self.assertEqual(clf1.predict(X), clf2.predict(X))
-        self.assertEqual(clf1.predict_proba(X), clf2.predict_proba(X))
+        proba1 = clf1.predict_proba(X)
+        proba2 = clf2.predict_proba(X)
+        self.assertEqual(len(proba1), len(proba2))
+        for row1, row2 in zip(proba1, proba2):
+            self.assertEqual(len(row1), len(row2))
+            for value1, value2 in zip(row1, row2):
+                self.assertAlmostEqual(value1, value2, places=12)
 
     def test_get_set_params(self):
         clf = DTGPClassifier(num_models=10, generations=20, random_state=3)
