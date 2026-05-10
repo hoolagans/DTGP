@@ -383,10 +383,10 @@ class DTGPClassifier:
         self.parallel_workers_ = n_workers
         self.classifiers_ = {class_label: fitted for class_label, fitted in results}
         self.class_training_curves_ = {
-            class_label: fitted["training_curve"] for class_label, fitted in self.classifiers_.items()
+            class_label: fitted["training_curve"] for class_label, fitted in results
         }
         self.class_best_fitness_ = {
-            class_label: fitted["best_fitness"] for class_label, fitted in self.classifiers_.items()
+            class_label: fitted["best_fitness"] for class_label, fitted in results
         }
 
         representative = self.classifiers_[classes[0]]
