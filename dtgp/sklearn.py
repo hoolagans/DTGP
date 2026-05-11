@@ -461,7 +461,7 @@ class DTGPClassifier:
         self._rng = random.Random(self.random_state)
         models, history = self._evolve(X, y_bool, curve_label=curve_label)
         best_tree = models[0]
-        _, raw_fit = self._raw_fitness(best_tree, X, y_bool)
+        _, raw_fit = self._predict_and_score(best_tree, X, y_bool)
         invert_output = raw_fit < 0.5
         best_fitness = self._fitness(best_tree, X, y_bool)
         return {
@@ -517,7 +517,7 @@ class DTGPClassifier:
         self.best_fitness_ = representative["best_fitness"]
         return self
 
-    def _raw_fitness(self, tree, X: Sequence[Sequence[float]], y_bool: Sequence[bool]) -> Tuple[List[bool], float]:
+    def _predict_and_score(self, tree, X: Sequence[Sequence[float]], y_bool: Sequence[bool]) -> Tuple[List[bool], float]:
         """Return (preds, raw_accuracy) to avoid recomputing predictions."""
         preds = [self._evaluate_model(tree, row) for row in X]
         return preds, sum(a == b for a, b in zip(preds, y_bool)) / len(X)
@@ -529,7 +529,7 @@ class DTGPClassifier:
             key = id(tree)
             if key in cache:
                 return cache[key]
-        preds, raw = self._raw_fitness(tree, X, y_bool)
+        preds, raw = self._predict_and_score(tree, X, y_bool)
         if self.fitness_method == "accuracy":
             score = max(raw, 1.0 - raw)
         else:
@@ -791,9 +791,9 @@ class DTGPClassifier:
                     line = f"[{curve_label}] {line}"
                 print(line, file=sys.stderr, flush=True)
 
-        # Reset caches: reset after evolution to avoid holding references.
-        self._fitness_cache = {}
-        self._paths_cache = {}
+        # Clear caches after evolution to release tree references.
+        del self._fitness_cache
+        del self._paths_cache
 
         final_scored = sorted(((m, self._fitness(m, X, y_bool)) for m in models), key=lambda t: t[1], reverse=True)
         return [m for m, _ in final_scored], history
