@@ -232,7 +232,7 @@ class TestDTGPClassifier(unittest.TestCase):
             self.assertTrue(any(f"[Class {class_label} | Model 2]" in tree for tree in many))
             self.assertEqual(sum(1 for tree in many if f"[Class {class_label} | Model " in tree), 2)
 
-    def test_view_model_tree_multi_model_printable_has_real_newlines(self):
+    def test_view_model_tree_multi_model_rendering(self):
         X = [[1.0, 0.0], [0.0, 1.0], [2.0, 0.0], [0.0, 2.0]]
         y = [1, 0, 1, 0]
         clf = DTGPClassifier(random_state=41, num_models=8, generations=4)
@@ -245,7 +245,7 @@ class TestDTGPClassifier(unittest.TestCase):
         self.assertIn("\n", rendered)
         self.assertNotIn("\\n", rendered)
 
-    def test_view_model_multi_model_printable_has_real_newlines(self):
+    def test_view_model_multi_model_rendering(self):
         X = [[1.0, 0.0], [0.0, 1.0], [2.0, 0.0], [0.0, 2.0]]
         y = [1, 0, 1, 0]
         clf = DTGPClassifier(random_state=43, num_models=8, generations=4)

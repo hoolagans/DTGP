@@ -59,7 +59,7 @@ class _RenderableModelList(list):
 
     This is returned by view methods when multiple models are requested.
     Printing it (or displaying it in an interactive shell) renders each item
-    separated by a blank line, instead of list-repr escaped ``\\n`` sequences.
+    separated by a blank line, instead of list-repr escaped newline sequences.
     """
 
     def __str__(self) -> str:
