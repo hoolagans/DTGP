@@ -243,6 +243,7 @@ class TestDTGPClassifier(unittest.TestCase):
         self.assertGreaterEqual(len(trees), 2)
         rendered = str(trees)
         self.assertIn("\n", rendered)
+        self.assertIn("\n\n", rendered)
         self.assertNotIn("\\n", rendered)
 
     def test_view_model_multi_model_rendering(self):
@@ -256,6 +257,7 @@ class TestDTGPClassifier(unittest.TestCase):
         self.assertGreaterEqual(len(models), 2)
         rendered = str(models)
         self.assertIn("\n", rendered)
+        self.assertIn("\n\n", rendered)
         self.assertNotIn("\\n", rendered)
 
     def test_seeded_tree_with_nested_math_operations(self):

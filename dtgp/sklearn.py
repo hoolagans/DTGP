@@ -54,7 +54,7 @@ _MATH_BINARY_OPS = {
 }
 
 
-class _RenderableModelList(list):
+class RenderableModelList(list):
     """List with readable multiline rendering for model inspection output.
 
     This is returned by view methods when multiple models are requested.
@@ -226,7 +226,7 @@ class DTGPClassifier:
             if i == 0 and self.invert_output_:
                 expr = f"NOT ({expr})"
             rendered.append(expr)
-        return rendered[0] if n_models == 1 else _RenderableModelList(rendered)
+        return rendered[0] if n_models == 1 else RenderableModelList(rendered)
 
     def view_model_tree(self, n_models: int = 1) -> str | List[str]:
         """Return tree-plot-like representation(s) of evolved model(s)."""
@@ -247,7 +247,7 @@ class DTGPClassifier:
             else:
                 lines.extend(self._tree_plot_lines(model, ""))
             rendered.append("\n".join(lines))
-        return rendered[0] if n_models == 1 else _RenderableModelList(rendered)
+        return rendered[0] if n_models == 1 else RenderableModelList(rendered)
 
     def _view_model_multiclass(self, n_models: int) -> str | List[str]:
         rendered: List[str] = []
@@ -262,7 +262,7 @@ class DTGPClassifier:
                 rendered.append(f"[Class {class_label} | Model {i + 1}] {expr}")
         if n_models == 1:
             return "\n".join(rendered)
-        return _RenderableModelList(rendered)
+        return RenderableModelList(rendered)
 
     def _view_model_tree_multiclass(self, n_models: int) -> str | List[str]:
         rendered: List[str] = []
@@ -280,7 +280,7 @@ class DTGPClassifier:
                 rendered.append("\n".join(lines))
         if n_models == 1:
             return "\n\n".join(rendered)
-        return _RenderableModelList(rendered)
+        return RenderableModelList(rendered)
 
     # --- DTGP internals ---
     def _inter_ops(self):
