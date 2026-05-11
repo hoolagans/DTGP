@@ -16,6 +16,43 @@ MIN_FALLBACK_SCORE = 1e-12
 DIV_EPSILON = 1e-12
 DIV_FALLBACK = 0.0
 
+# Module-level op-dispatch tables — built once instead of on every call.
+_INTER_OPS = {
+    "ge": lambda a, b: a >= b,
+    "gt": lambda a, b: a > b,
+    "le": lambda a, b: a <= b,
+    "lt": lambda a, b: a < b,
+    "eq": lambda a, b: a == b,
+    "ne": lambda a, b: a != b,
+}
+
+_NODE_OPS = {
+    "and": lambda a, b: bool(a) and bool(b),
+    "or": lambda a, b: bool(a) or bool(b),
+    "nand": lambda a, b: not (bool(a) and bool(b)),
+    "nor": lambda a, b: not (bool(a) or bool(b)),
+    "xor": lambda a, b: bool(a) ^ bool(b),
+}
+
+_MATH_UNARY_OPS = {
+    "neg": lambda a: -a,
+    "abs": lambda a: abs(a),
+    "sqrt": lambda a: math.sqrt(abs(a)),
+    "log1p": lambda a: math.log1p(abs(a)),
+    "sin": lambda a: math.sin(a),
+    "cos": lambda a: math.cos(a),
+    "tanh": lambda a: math.tanh(a),
+}
+
+_MATH_BINARY_OPS = {
+    "add": lambda a, b: a + b,
+    "sub": lambda a, b: a - b,
+    "mul": lambda a, b: a * b,
+    "div": lambda a, b: a / b if abs(b) > DIV_EPSILON else DIV_FALLBACK,
+    "min": lambda a, b: min(a, b),
+    "max": lambda a, b: max(a, b),
+}
+
 
 class DTGPClassifier:
     """Decision Tree Genetic Programming classifier with sklearn-style API."""
@@ -232,44 +269,16 @@ class DTGPClassifier:
 
     # --- DTGP internals ---
     def _inter_ops(self):
-        return {
-            "ge": lambda a, b: a >= b,
-            "gt": lambda a, b: a > b,
-            "le": lambda a, b: a <= b,
-            "lt": lambda a, b: a < b,
-            "eq": lambda a, b: a == b,
-            "ne": lambda a, b: a != b,
-        }
+        return _INTER_OPS
 
     def _node_ops(self):
-        return {
-            "and": lambda a, b: bool(a) and bool(b),
-            "or": lambda a, b: bool(a) or bool(b),
-            "nand": lambda a, b: not (bool(a) and bool(b)),
-            "nor": lambda a, b: not (bool(a) or bool(b)),
-            "xor": lambda a, b: bool(a) ^ bool(b),
-        }
+        return _NODE_OPS
 
     def _math_unary_ops(self):
-        return {
-            "neg": lambda a: -a,
-            "abs": lambda a: abs(a),
-            "sqrt": lambda a: math.sqrt(abs(a)),
-            "log1p": lambda a: math.log1p(abs(a)),
-            "sin": lambda a: math.sin(a),
-            "cos": lambda a: math.cos(a),
-            "tanh": lambda a: math.tanh(a),
-        }
+        return _MATH_UNARY_OPS
 
     def _math_binary_ops(self):
-        return {
-            "add": lambda a, b: a + b,
-            "sub": lambda a, b: a - b,
-            "mul": lambda a, b: a * b,
-            "div": lambda a, b: a / b if abs(b) > DIV_EPSILON else DIV_FALLBACK,
-            "min": lambda a, b: min(a, b),
-            "max": lambda a, b: max(a, b),
-        }
+        return _MATH_BINARY_OPS
 
     def _random_base_value(self):
         if self.n_features_in_ <= 0:
@@ -364,19 +373,19 @@ class DTGPClassifier:
         if kind == "math1":
             _, op, child = value_node
             inner = self._eval_value(child, data)
-            return self._sanitize_value(self._math_unary_ops()[op](inner))
+            return self._sanitize_value(_MATH_UNARY_OPS[op](inner))
         _, op, left, right = value_node
         a = self._eval_value(left, data)
         b = self._eval_value(right, data)
-        return self._sanitize_value(self._math_binary_ops()[op](a, b))
+        return self._sanitize_value(_MATH_BINARY_OPS[op](a, b))
 
     def _evaluate_model(self, tree, data: Sequence[float]) -> bool:
         kind = tree[0]
         if kind == "inter":
             _, op, left, right = tree
-            return bool(self._inter_ops()[op](self._eval_value(left, data), self._eval_value(right, data)))
+            return bool(_INTER_OPS[op](self._eval_value(left, data), self._eval_value(right, data)))
         _, op, left, right = tree
-        return bool(self._node_ops()[op](self._evaluate_model(left, data), self._evaluate_model(right, data)))
+        return bool(_NODE_OPS[op](self._evaluate_model(left, data), self._evaluate_model(right, data)))
 
     def _value_to_expression(self, value_node) -> str:
         kind = value_node[0]
@@ -452,7 +461,7 @@ class DTGPClassifier:
         self._rng = random.Random(self.random_state)
         models, history = self._evolve(X, y_bool, curve_label=curve_label)
         best_tree = models[0]
-        raw_fit = self._raw_fitness(best_tree, X, y_bool)
+        _, raw_fit = self._raw_fitness(best_tree, X, y_bool)
         invert_output = raw_fit < 0.5
         best_fitness = self._fitness(best_tree, X, y_bool)
         return {
@@ -508,16 +517,26 @@ class DTGPClassifier:
         self.best_fitness_ = representative["best_fitness"]
         return self
 
-    def _raw_fitness(self, tree, X: Sequence[Sequence[float]], y_bool: Sequence[bool]) -> float:
+    def _raw_fitness(self, tree, X: Sequence[Sequence[float]], y_bool: Sequence[bool]) -> Tuple[List[bool], float]:
+        """Return (preds, raw_accuracy) to avoid recomputing predictions."""
         preds = [self._evaluate_model(tree, row) for row in X]
-        return sum(a == b for a, b in zip(preds, y_bool)) / len(X)
+        return preds, sum(a == b for a, b in zip(preds, y_bool)) / len(X)
 
     def _fitness(self, tree, X: Sequence[Sequence[float]], y_bool: Sequence[bool]) -> float:
-        raw = self._raw_fitness(tree, X, y_bool)
+        # Use the per-generation cache when available.
+        cache = getattr(self, "_fitness_cache", None)
+        if cache is not None:
+            key = id(tree)
+            if key in cache:
+                return cache[key]
+        preds, raw = self._raw_fitness(tree, X, y_bool)
         if self.fitness_method == "accuracy":
-            return max(raw, 1.0 - raw)
-        preds = [self._evaluate_model(tree, row) for row in X]
-        return self._pearson_r_squared(preds, y_bool)
+            score = max(raw, 1.0 - raw)
+        else:
+            score = self._pearson_r_squared(preds, y_bool)
+        if cache is not None:
+            cache[key] = score
+        return score
 
     def _pearson_r_squared(self, x: Sequence[bool], y: Sequence[bool]) -> float:
         x_float = [1.0 if v else 0.0 for v in x]
@@ -552,7 +571,17 @@ class DTGPClassifier:
 
     def _model_complexity(self, tree) -> int:
         """Return model complexity as total subtree path count (lower is simpler)."""
-        return len(self._collect_paths(tree))
+        return len(self._get_paths(tree))
+
+    def _get_paths(self, tree) -> List[Tuple[int, ...]]:
+        """Return cached paths list for *tree*, computing if not yet cached."""
+        cache = getattr(self, "_paths_cache", None)
+        if cache is not None:
+            key = id(tree)
+            if key not in cache:
+                cache[key] = self._collect_paths(tree)
+            return cache[key]
+        return self._collect_paths(tree)
 
     def _child_indexes(self, node) -> Tuple[int, ...]:
         kind = node[0]
@@ -600,15 +629,15 @@ class DTGPClassifier:
         return self._random_value_expr()
 
     def _mutate(self, tree):
-        paths = self._collect_paths(tree)
+        paths = self._get_paths(tree)
         target = self._rng.choice(paths)
         target_node = self._get_subtree(tree, target)
         replacement = self._random_replacement_for(target_node)
         return self._set_subtree(tree, target, replacement)
 
     def _crossover(self, tree1, tree2):
-        paths1 = self._collect_paths(tree1)
-        paths2 = self._collect_paths(tree2)
+        paths1 = self._get_paths(tree1)
+        paths2 = self._get_paths(tree2)
         p1 = self._rng.choice(paths1)
         s1 = self._get_subtree(tree1, p1)
         compatible_paths2 = [p for p in paths2 if self._node_category(self._get_subtree(tree2, p)) == self._node_category(s1)]
@@ -699,6 +728,10 @@ class DTGPClassifier:
         while len(models) < self.num_models:
             models.append(self._random_tree(self.max_depth))
 
+        # Per-generation caches; reset at the start of each generation.
+        self._fitness_cache: dict = {}
+        self._paths_cache: dict = {}
+
         initial_best = max(self._fitness(m, X, y_bool) for m in models)
         history = [initial_best]
         if self.show_training_curve:
@@ -708,6 +741,11 @@ class DTGPClassifier:
             print(line, file=sys.stderr, flush=True)
 
         for gen_idx in range(self.generations):
+            # Reset per-generation caches so stale id()-keyed entries don't
+            # accumulate or produce false hits if a new tree reuses an old id.
+            self._fitness_cache = {}
+            self._paths_cache = {}
+
             new_models = []
 
             cross_target = int(self.crossover_rate * self.num_models)
@@ -726,25 +764,36 @@ class DTGPClassifier:
 
             if self.selection_method == "pareto_tournament":
                 elites = self._pareto_elite_layers(models, X, y_bool, elite_count)
+                # _pareto_elite_layers already scored all models; reuse the best.
+                best_now = max(self._fitness(m, X, y_bool) for m in elites) if elites else 0.0
             else:
                 scored = sorted(((m, self._fitness(m, X, y_bool)) for m in models), key=lambda t: t[1], reverse=True)
                 elites = [m for m, _ in scored[:elite_count]]
+                best_now = scored[0][1] if scored else 0.0
             new_models.extend(elites)
 
-            deduped = list(dict.fromkeys(new_models))
+            seen: set = set()
+            deduped = []
+            for m in new_models:
+                if m not in seen:
+                    seen.add(m)
+                    deduped.append(m)
             filtered = [m for m in deduped if self._tree_depth(m) <= self.max_depth]
 
             while len(filtered) < self.num_models:
                 filtered.append(self._random_tree(self.max_depth))
 
             models = filtered[: self.num_models]
-            best_now = max(self._fitness(m, X, y_bool) for m in models)
             history.append(best_now)
             if self.show_training_curve:
                 line = self._training_curve_line(gen_idx + 1, self.generations, best_now)
                 if curve_label:
                     line = f"[{curve_label}] {line}"
                 print(line, file=sys.stderr, flush=True)
+
+        # Reset caches: reset after evolution to avoid holding references.
+        self._fitness_cache = {}
+        self._paths_cache = {}
 
         final_scored = sorted(((m, self._fitness(m, X, y_bool)) for m in models), key=lambda t: t[1], reverse=True)
         return [m for m, _ in final_scored], history
