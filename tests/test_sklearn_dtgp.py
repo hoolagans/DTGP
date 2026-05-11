@@ -172,6 +172,64 @@ class TestDTGPClassifier(unittest.TestCase):
         self.assertTrue(all(len(row) == 3 for row in proba))
         self.assertTrue(all(abs(sum(row) - 1.0) < 1e-9 for row in proba))
 
+    def test_multiclass_view_model_includes_each_class(self):
+        X = [
+            [9.0, 1.0, 1.0],
+            [8.0, 2.0, 1.0],
+            [1.0, 9.0, 1.0],
+            [2.0, 8.0, 1.0],
+            [1.0, 1.0, 9.0],
+            [1.0, 2.0, 8.0],
+            [7.0, 2.0, 1.0],
+            [2.0, 7.0, 1.0],
+            [1.0, 2.0, 7.0],
+        ]
+        y = [0, 0, 1, 1, 2, 2, 0, 1, 2]
+
+        clf = DTGPClassifier(random_state=27, num_models=12, generations=12)
+        clf.fit(X, y)
+
+        one = clf.view_model()
+        self.assertIsInstance(one, str)
+        for class_label in clf.classes_:
+            self.assertIn(f"[Class {class_label} | Model 1]", one)
+
+        many = clf.view_model(2)
+        self.assertIsInstance(many, list)
+        self.assertEqual(len(many), len(clf.classes_) * 2)
+        for class_label in clf.classes_:
+            self.assertTrue(any(f"[Class {class_label} | Model 1]" in expr for expr in many))
+            self.assertTrue(any(f"[Class {class_label} | Model 2]" in expr for expr in many))
+
+    def test_multiclass_view_model_tree_includes_each_class(self):
+        X = [
+            [9.0, 1.0, 1.0],
+            [8.0, 2.0, 1.0],
+            [1.0, 9.0, 1.0],
+            [2.0, 8.0, 1.0],
+            [1.0, 1.0, 9.0],
+            [1.0, 2.0, 8.0],
+            [7.0, 2.0, 1.0],
+            [2.0, 7.0, 1.0],
+            [1.0, 2.0, 7.0],
+        ]
+        y = [0, 0, 1, 1, 2, 2, 0, 1, 2]
+
+        clf = DTGPClassifier(random_state=29, num_models=12, generations=12)
+        clf.fit(X, y)
+
+        one = clf.view_model_tree()
+        self.assertIsInstance(one, str)
+        for class_label in clf.classes_:
+            self.assertIn(f"[Class {class_label} | Model 1]", one)
+
+        many = clf.view_model_tree(2)
+        self.assertIsInstance(many, list)
+        self.assertEqual(len(many), len(clf.classes_) * 2)
+        for class_label in clf.classes_:
+            self.assertTrue(any(f"[Class {class_label} | Model 1]" in tree for tree in many))
+            self.assertTrue(any(f"[Class {class_label} | Model 2]" in tree for tree in many))
+
     def test_seeded_tree_with_nested_math_operations(self):
         X = [
             [1.0, 1.0],

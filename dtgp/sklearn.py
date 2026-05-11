@@ -163,6 +163,8 @@ class DTGPClassifier:
         self._require_fitted()
         if n_models < 1:
             raise ValueError("n_models must be >= 1")
+        if getattr(self, "multiclass_strategy_", None) == "one_vs_rest":
+            return self._view_model_multiclass(n_models)
 
         limit = min(n_models, len(self.population_))
         models = self.population_[:limit]
@@ -179,6 +181,8 @@ class DTGPClassifier:
         self._require_fitted()
         if n_models < 1:
             raise ValueError("n_models must be >= 1")
+        if getattr(self, "multiclass_strategy_", None) == "one_vs_rest":
+            return self._view_model_tree_multiclass(n_models)
 
         limit = min(n_models, len(self.population_))
         models = self.population_[:limit]
@@ -192,6 +196,39 @@ class DTGPClassifier:
                 lines.extend(self._tree_plot_lines(model, ""))
             rendered.append("\n".join(lines))
         return rendered[0] if n_models == 1 else rendered
+
+    def _view_model_multiclass(self, n_models: int) -> str | List[str]:
+        rendered: List[str] = []
+        for class_label in self.classes_:
+            fitted = self.classifiers_[class_label]
+            limit = min(n_models, len(fitted["population"]))
+            models = fitted["population"][:limit]
+            for i, model in enumerate(models):
+                expr = self._tree_to_expression(model)
+                if i == 0 and fitted["invert_output"]:
+                    expr = f"NOT ({expr})"
+                rendered.append(f"[Class {class_label} | Model {i + 1}] {expr}")
+        if n_models == 1:
+            return "\n".join(rendered)
+        return rendered
+
+    def _view_model_tree_multiclass(self, n_models: int) -> str | List[str]:
+        rendered: List[str] = []
+        for class_label in self.classes_:
+            fitted = self.classifiers_[class_label]
+            limit = min(n_models, len(fitted["population"]))
+            models = fitted["population"][:limit]
+            for i, model in enumerate(models):
+                lines = [f"[Class {class_label} | Model {i + 1}]"]
+                if i == 0 and fitted["invert_output"]:
+                    lines.append("└─ NOT")
+                    lines.extend(self._tree_plot_lines(model, "   "))
+                else:
+                    lines.extend(self._tree_plot_lines(model, ""))
+                rendered.append("\n".join(lines))
+        if n_models == 1:
+            return "\n\n".join(rendered)
+        return rendered
 
     # --- DTGP internals ---
     def _inter_ops(self):

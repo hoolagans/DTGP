@@ -72,6 +72,9 @@ tree = clf.view_model_tree()       # one model in tree-like format
 top2_trees = clf.view_model_tree(2)
 ```
 
+For multiclass one-vs-rest models, both inspection methods include class labels in the output
+so it is clear which class each displayed model belongs to.
+
 ## Tree/value expression behavior
 
 - Leaves are dataset variables (`x[i]`) and numeric constants.
