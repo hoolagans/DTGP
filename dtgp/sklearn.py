@@ -54,6 +54,16 @@ _MATH_BINARY_OPS = {
 }
 
 
+class _RenderableModelList(list):
+    """List with readable string rendering for model inspection output."""
+
+    def __str__(self) -> str:
+        return "\n\n".join(str(item) for item in self)
+
+    def __repr__(self) -> str:
+        return self.__str__()
+
+
 class DTGPClassifier:
     """Decision Tree Genetic Programming classifier with sklearn-style API."""
 
@@ -211,7 +221,7 @@ class DTGPClassifier:
             if i == 0 and self.invert_output_:
                 expr = f"NOT ({expr})"
             rendered.append(expr)
-        return rendered[0] if n_models == 1 else rendered
+        return rendered[0] if n_models == 1 else _RenderableModelList(rendered)
 
     def view_model_tree(self, n_models: int = 1) -> str | List[str]:
         """Return tree-plot-like representation(s) of evolved model(s)."""
@@ -232,7 +242,7 @@ class DTGPClassifier:
             else:
                 lines.extend(self._tree_plot_lines(model, ""))
             rendered.append("\n".join(lines))
-        return rendered[0] if n_models == 1 else rendered
+        return rendered[0] if n_models == 1 else _RenderableModelList(rendered)
 
     def _view_model_multiclass(self, n_models: int) -> str | List[str]:
         rendered: List[str] = []
@@ -247,7 +257,7 @@ class DTGPClassifier:
                 rendered.append(f"[Class {class_label} | Model {i + 1}] {expr}")
         if n_models == 1:
             return "\n".join(rendered)
-        return rendered
+        return _RenderableModelList(rendered)
 
     def _view_model_tree_multiclass(self, n_models: int) -> str | List[str]:
         rendered: List[str] = []
@@ -265,7 +275,7 @@ class DTGPClassifier:
                 rendered.append("\n".join(lines))
         if n_models == 1:
             return "\n\n".join(rendered)
-        return rendered
+        return _RenderableModelList(rendered)
 
     # --- DTGP internals ---
     def _inter_ops(self):
