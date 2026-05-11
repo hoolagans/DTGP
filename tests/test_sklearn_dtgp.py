@@ -200,6 +200,7 @@ class TestDTGPClassifier(unittest.TestCase):
         for class_label in clf.classes_:
             self.assertTrue(any(f"[Class {class_label} | Model 1]" in expr for expr in many))
             self.assertTrue(any(f"[Class {class_label} | Model 2]" in expr for expr in many))
+            self.assertEqual(sum(1 for expr in many if f"[Class {class_label} | Model " in expr), 2)
 
     def test_multiclass_view_model_tree_includes_each_class(self):
         X = [
@@ -229,6 +230,7 @@ class TestDTGPClassifier(unittest.TestCase):
         for class_label in clf.classes_:
             self.assertTrue(any(f"[Class {class_label} | Model 1]" in tree for tree in many))
             self.assertTrue(any(f"[Class {class_label} | Model 2]" in tree for tree in many))
+            self.assertEqual(sum(1 for tree in many if f"[Class {class_label} | Model " in tree), 2)
 
     def test_seeded_tree_with_nested_math_operations(self):
         X = [
