@@ -629,6 +629,35 @@ class DTGPClassifier:
         scored.sort(key=lambda t: t[1], reverse=True)
         return scored[0][0]
 
+    def _pareto_elite_layers(self, models, X, y_bool, elite_count: int):
+        """Return elites by preserving whole Pareto layers until the budget is filled.
+
+        The first non-dominated front is always carried over in full.  Subsequent
+        fronts are added whole until adding the next front would exceed *elite_count*,
+        at which point models in that partial front are ranked by fitness (descending)
+        then complexity (ascending) and the highest-ranked ones fill the remaining
+        budget.
+        """
+        metrics = {m: (self._fitness(m, X, y_bool), self._model_complexity(m)) for m in models}
+
+        def dominates(left, right) -> bool:
+            lf, lc = metrics[left]
+            rf, rc = metrics[right]
+            return (lf >= rf and lc <= rc) and (lf > rf or lc < rc)
+
+        remaining = list(models)
+        elites: list = []
+        while remaining and len(elites) < elite_count:
+            front = [m for m in remaining if not any(dominates(other, m) for other in remaining if other is not m)]
+            front.sort(key=lambda m: (-metrics[m][0], metrics[m][1]))
+            budget_left = elite_count - len(elites)
+            if len(front) <= budget_left:
+                elites.extend(front)
+            else:
+                elites.extend(front[:budget_left])
+            remaining = [m for m in remaining if m not in set(front)]
+        return elites
+
     def _pareto_tournament_select(self, models, X, y_bool):
         """Return the full non-dominated front from one tournament sample.
 
@@ -695,8 +724,11 @@ class DTGPClassifier:
                 p = self._select_parent(models, X, y_bool)
                 new_models.append(self._mutate(p))
 
-            scored = sorted(((m, self._fitness(m, X, y_bool)) for m in models), key=lambda t: t[1], reverse=True)
-            elites = [m for m, _ in scored[:elite_count]]
+            if self.selection_method == "pareto_tournament":
+                elites = self._pareto_elite_layers(models, X, y_bool, elite_count)
+            else:
+                scored = sorted(((m, self._fitness(m, X, y_bool)) for m in models), key=lambda t: t[1], reverse=True)
+                elites = [m for m, _ in scored[:elite_count]]
             new_models.extend(elites)
 
             deduped = list(dict.fromkeys(new_models))

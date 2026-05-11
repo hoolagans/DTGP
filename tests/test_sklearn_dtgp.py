@@ -343,6 +343,44 @@ class TestDTGPClassifier(unittest.TestCase):
         self.assertGreaterEqual(clf.best_fitness_, 0.0)
         self.assertLessEqual(clf.best_fitness_, 1.0)
 
+    def test_pareto_elite_layers_preserves_full_first_front(self):
+        X = [[3.0, 1.0], [2.0, 2.5], [1.0, 2.0], [4.0, 0.5], [0.5, 3.0], [3.5, 2.0]]
+        y_bool = [row[0] > row[1] for row in X]
+
+        m1 = ("inter", "gt", ("var", 0), ("var", 1))
+        m2 = ("inter", "gt", ("var", 0), ("const", 2.0))
+        m3 = ("node", "and", m1, m2)
+        models = [m1, m2, m3]
+        clf = DTGPClassifier(
+            tournament_size=3,
+            selection_method="pareto_tournament",
+            random_state=47,
+            num_models=3,
+            generations=0,
+            initial_population=models,
+        )
+        clf.fit(X, [1 if v else 0 for v in y_bool])
+
+        metrics = {m: (clf._fitness(m, X, y_bool), clf._model_complexity(m)) for m in models}
+
+        def dominates(left, right):
+            lf, lc = metrics[left]
+            rf, rc = metrics[right]
+            return (lf >= rf and lc <= rc) and (lf > rf or lc < rc)
+
+        expected_front = [m for m in models if not any(dominates(other, m) for other in models if other is not m)]
+
+        # With a budget equal to the full population the result should contain
+        # at least the entire first Pareto front.
+        elites = clf._pareto_elite_layers(models, X, y_bool, len(models))
+        for m in expected_front:
+            self.assertIn(m, elites)
+
+        # With budget equal to the first-front size, the result should be
+        # exactly the first front.
+        elites_tight = clf._pareto_elite_layers(models, X, y_bool, len(expected_front))
+        self.assertEqual(set(elites_tight), set(expected_front))
+
 
 if __name__ == "__main__":
     unittest.main()
