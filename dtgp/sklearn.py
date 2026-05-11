@@ -646,7 +646,7 @@ class DTGPClassifier:
             return (lf >= rf and lc <= rc) and (lf > rf or lc < rc)
 
         remaining = list(models)
-        elites: list = []
+        elites: List = []
         while remaining and len(elites) < elite_count:
             front = [m for m in remaining if not any(dominates(other, m) for other in remaining if other is not m)]
             front.sort(key=lambda m: (-metrics[m][0], metrics[m][1]))

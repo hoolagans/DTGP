@@ -370,11 +370,10 @@ class TestDTGPClassifier(unittest.TestCase):
 
         expected_front = [m for m in models if not any(dominates(other, m) for other in models if other is not m)]
 
-        # With a budget equal to the full population the result should contain
+        # With a budget equal to the full population the result must contain
         # at least the entire first Pareto front.
         elites = clf._pareto_elite_layers(models, X, y_bool, len(models))
-        for m in expected_front:
-            self.assertIn(m, elites)
+        self.assertTrue(set(expected_front).issubset(set(elites)))
 
         # With budget equal to the first-front size, the result should be
         # exactly the first front.
