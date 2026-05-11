@@ -55,7 +55,12 @@ _MATH_BINARY_OPS = {
 
 
 class _RenderableModelList(list):
-    """List with readable string rendering for model inspection output."""
+    """List with readable multiline rendering for model inspection output.
+
+    This is returned by view methods when multiple models are requested.
+    Printing it (or displaying it in an interactive shell) renders each item
+    separated by a blank line, instead of list-repr escaped ``\\n`` sequences.
+    """
 
     def __str__(self) -> str:
         return "\n\n".join(str(item) for item in self)
